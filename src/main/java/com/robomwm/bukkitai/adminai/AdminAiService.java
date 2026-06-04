@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -36,6 +37,7 @@ class AdminAiService implements Listener
     private final AtomicReference<CompletableFuture<Boolean>> approvalFuture = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<?>> currentTask = new AtomicReference<>();
     private final ApprovalAiClient approvalClient;
+    private final java.util.Queue<String> exceptionQueue = new ConcurrentLinkedQueue<>();
 
     AdminAiService(BukkitAI plugin)
     {
@@ -52,6 +54,32 @@ class AdminAiService implements Listener
             if (config.isEnabled())
                 run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true);
         }, 1200L); // 1 minute after startup
+
+        plugin.getServer().getScheduler().runTaskTimer(plugin, this::processQueuedExceptions, 6000L, 6000L); // Every 5 minutes
+    }
+
+    private void processQueuedExceptions()
+    {
+        if (exceptionQueue.isEmpty() || !config.isEnabled()) return;
+        
+        if (isRunning())
+        {
+            exceptionQueue.clear();
+            return;
+        }
+
+        List<String> uniqueExceptions = new ArrayList<>();
+        String ex;
+        while ((ex = exceptionQueue.poll()) != null)
+        {
+            if (!uniqueExceptions.contains(ex))
+                uniqueExceptions.add(ex);
+        }
+        if (uniqueExceptions.isEmpty()) return;
+
+        String prompt = "The server encountered the following exceptions recently. Please investigate the logs (e.g. plugins/ErrorSink/errors.log or logs/latest.log) for stacktraces and suggest/apply fixes or propose a plan:\n"
+                + String.join("\n", uniqueExceptions);
+        run(plugin.getServer().getConsoleSender(), prompt, true);
     }
 
     @EventHandler
@@ -60,7 +88,7 @@ class AdminAiService implements Listener
         if (!config.isEnabled()) return;
         String msg = event.getException().getMessage();
         if (msg == null) msg = event.getException().getClass().getSimpleName();
-        run(plugin.getServer().getConsoleSender(), "An exception occurred: " + msg + ". Please check logs and investigate.", true);
+        exceptionQueue.offer(event.getException().getClass().getSimpleName() + ": " + msg);
     }
 
     String getStatus()
