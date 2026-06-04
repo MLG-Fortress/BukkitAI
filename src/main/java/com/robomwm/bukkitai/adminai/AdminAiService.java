@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 class AdminAiService
@@ -30,12 +31,14 @@ class AdminAiService
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final AtomicReference<Process> currentProcess = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<Boolean>> approvalFuture = new AtomicReference<>();
-    private CompletableFuture<?> currentTask;
+    private final AtomicReference<CompletableFuture<?>> currentTask = new AtomicReference<>();
+    private final ApprovalAiClient approvalClient;
 
     AdminAiService(BukkitAI plugin)
     {
         this.plugin = plugin;
         this.config = new AdminAiConfig(plugin);
+        this.approvalClient = new ApprovalAiClient(client, config, plugin.getLogger());
         scheduleMaintenanceCheck();
     }
 
@@ -105,7 +108,7 @@ class AdminAiService
             return;
         }
 
-        currentTask = CompletableFuture.runAsync(() -> runAgent(sender, prompt, proactive), executor);
+        currentTask.set(CompletableFuture.runAsync(() -> runAgent(sender, prompt, proactive), executor));
         if (!proactive)
             sender.sendMessage(ChatColor.GREEN + "Admin AI task started.");
     }
@@ -118,8 +121,9 @@ class AdminAiService
         CompletableFuture<Boolean> approval = approvalFuture.getAndSet(null);
         if (approval != null)
             approval.complete(false);
-        if (currentTask != null)
-            currentTask.cancel(true);
+        CompletableFuture<?> task = currentTask.getAndSet(null);
+        if (task != null)
+            task.cancel(true);
     }
 
     void shutdown()
@@ -130,7 +134,8 @@ class AdminAiService
 
     private boolean isRunning()
     {
-        return currentTask != null && !currentTask.isDone();
+        CompletableFuture<?> task = currentTask.get();
+        return task != null && !task.isDone();
     }
 
     private void runAgent(CommandSender sender, String userPrompt, boolean proactive)
@@ -147,7 +152,7 @@ class AdminAiService
                 String response = completeWithFallback(messages);
                 messages.add(new AiMessage("assistant", response));
                 AiAction action = parseAction(response);
-                String result = executeAction(action, proactive);
+                String result = executeAction(action, messages, proactive);
                 messages.add(new AiMessage("user", result));
                 if ("finish".equalsIgnoreCase(action.action))
                 {
@@ -191,32 +196,46 @@ class AdminAiService
         throw last == null ? new IOException("No enabled providers.") : last;
     }
 
-    private String executeAction(AiAction action, boolean proactive) throws IOException, InterruptedException
+    private String executeAction(AiAction action, List<AiMessage> messages, boolean proactive) throws IOException, InterruptedException
     {
         ensureStillEnabled();
         String actionName = action.action == null ? "" : action.action.toLowerCase(Locale.ROOT);
 
-        if ((config.isInteractive() || proactive) && isDestructive(actionName))
+        if (isDestructive(actionName))
         {
-            CompletableFuture<Boolean> future = new CompletableFuture<>();
-            approvalFuture.set(future);
-            plugin.getServer().getScheduler().runTask(plugin, () -> {
-                plugin.getServer().broadcast(ChatColor.GOLD + "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] Pending Action: " + actionName, "mlg.admin");
-                if ("write_file".equals(actionName))
-                    plugin.getServer().broadcast(ChatColor.GRAY + "Path: " + action.path, "mlg.admin");
-                if ("run_command".equals(actionName))
-                    plugin.getServer().broadcast(ChatColor.GRAY + "Command: " + action.command, "mlg.admin");
-                plugin.getServer().broadcast(ChatColor.YELLOW + "Use /adminai approve or /adminai deny", "mlg.admin");
-            });
+            String approvalMode = config.getApprovalMode();
+            boolean needsApproval = config.isInteractive() || proactive;
 
-            try
+            // In AI mode, always evaluate via AI (regardless of interactive flag)
+            if ("ai".equals(approvalMode))
             {
-                if (!future.get())
-                    return "RESULT error\nAction denied by administrator.";
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
+                broadcastApprovalResult(actionName, action, proactive, result);
+                if (!result.approved())
+                    return "RESULT error\nAction denied by approval AI: " + result.reason();
             }
-            catch (Exception e)
+            else if ("ai-fallback-human".equals(approvalMode))
             {
-                return "RESULT error\nApproval process interrupted.";
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
+                if (result.reason().startsWith("All approval AI providers unavailable"))
+                {
+                    // AI unavailable — fall back to human approval
+                    String humanResult = requestHumanApproval(actionName, action, proactive);
+                    if (humanResult != null)
+                        return humanResult;
+                }
+                else
+                {
+                    broadcastApprovalResult(actionName, action, proactive, result);
+                    if (!result.approved())
+                        return "RESULT error\nAction denied by approval AI: " + result.reason();
+                }
+            }
+            else if (needsApproval) // "human" mode
+            {
+                String humanResult = requestHumanApproval(actionName, action, proactive);
+                if (humanResult != null)
+                    return humanResult;
             }
         }
 
@@ -404,6 +423,52 @@ class AdminAiService
     private void send(CommandSender sender, String message)
     {
         plugin.getServer().getScheduler().runTask(plugin, () -> sender.sendMessage(message));
+    }
+
+    private String requestHumanApproval(String actionName, AiAction action, boolean proactive)
+    {
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        approvalFuture.set(future);
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            plugin.getServer().broadcast(ChatColor.GOLD + "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] Pending Action: " + actionName, "mlg.admin");
+            if ("write_file".equals(actionName))
+                plugin.getServer().broadcast(ChatColor.GRAY + "Path: " + action.path, "mlg.admin");
+            if ("run_command".equals(actionName))
+                plugin.getServer().broadcast(ChatColor.GRAY + "Command: " + action.command, "mlg.admin");
+            plugin.getServer().broadcast(ChatColor.YELLOW + "Use /adminai approve or /adminai deny", "mlg.admin");
+        });
+
+        try
+        {
+            int timeoutMinutes = config.getApprovalTimeoutMinutes();
+            if (!future.get(timeoutMinutes, TimeUnit.MINUTES))
+                return "RESULT error\nAction denied by administrator.";
+        }
+        catch (TimeoutException e)
+        {
+            approvalFuture.compareAndSet(future, null);
+            plugin.getLogger().warning("Admin AI approval timed out for: " + actionName);
+            return "RESULT error\nApproval timed out after " + config.getApprovalTimeoutMinutes() + " minutes.";
+        }
+        catch (Exception e)
+        {
+            return "RESULT error\nApproval process interrupted.";
+        }
+        return null; // approved
+    }
+
+    private void broadcastApprovalResult(String actionName, AiAction action, boolean proactive, ApprovalAiClient.ApprovalResult result)
+    {
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            String status = result.approved() ? ChatColor.GREEN + "APPROVED" : ChatColor.RED + "DENIED";
+            plugin.getServer().broadcast(
+                    ChatColor.GOLD + "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] "
+                            + status + ChatColor.GRAY + " " + actionName
+                            + ("run_command".equals(actionName) ? ": " + action.command : "")
+                            + ("write_file".equals(actionName) ? ": " + action.path : ""),
+                    "mlg.admin");
+            plugin.getServer().broadcast(ChatColor.GRAY + "Reason: " + result.reason(), "mlg.admin");
+        });
     }
 
     private boolean isDestructive(String actionName)

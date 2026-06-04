@@ -32,6 +32,8 @@ class AdminAiConfig
         config.addDefault("admin-ai|max-command-seconds", 300);
         config.addDefault("admin-ai|max-file-bytes", 65536);
         config.addDefault("admin-ai|log-tail-lines", 200);
+        config.addDefault("admin-ai|approval-mode", "human"); // human, ai, ai-fallback-human
+        config.addDefault("admin-ai|approval-timeout-minutes", 5);
         config.addDefault("admin-ai|provider-order", List.of("relayfree", "ollama-proxy", "chat-api"));
 
         config.addDefault("admin-ai|providers|relayfree|enabled", false);
@@ -54,6 +56,14 @@ class AdminAiConfig
         config.addDefault("admin-ai|providers|chat-api|model", "qwen2.5-coder:latest");
         config.addDefault("admin-ai|providers|chat-api|api-key", "");
         config.addDefault("admin-ai|providers|chat-api|timeout-seconds", 90);
+
+        // Dedicated approval provider (optional — falls back to regular providers if none enabled)
+        config.addDefault("admin-ai|approval-providers|approval-ai|enabled", false);
+        config.addDefault("admin-ai|approval-providers|approval-ai|protocol", "openai-chat-completions");
+        config.addDefault("admin-ai|approval-providers|approval-ai|endpoint", "http://127.0.0.1:8000/v1/chat/completions");
+        config.addDefault("admin-ai|approval-providers|approval-ai|model", "meta-model");
+        config.addDefault("admin-ai|approval-providers|approval-ai|api-key", "relay-free");
+        config.addDefault("admin-ai|approval-providers|approval-ai|timeout-seconds", 30);
 
         config.addDefault("admin-ai|actions|working-directory", "/home/robo/bukkitai");
         config.addDefault("admin-ai|actions|source-roots", List.of("/home/robo/bukkitai"));
@@ -118,12 +128,51 @@ class AdminAiConfig
         return plugin.getConfig().getString(path, "");
     }
 
+    String getApprovalMode()
+    {
+        return plugin.getConfig().getString("admin-ai|approval-mode", "human").toLowerCase(java.util.Locale.ROOT);
+    }
+
+    int getApprovalTimeoutMinutes()
+    {
+        return plugin.getConfig().getInt("admin-ai|approval-timeout-minutes", 5);
+    }
+
     List<AiProvider> getProviders()
     {
+        return loadProviders("admin-ai|providers", "admin-ai|provider-order");
+    }
+
+    List<AiProvider> getApprovalProviders()
+    {
+        // Scan all sections under approval-providers for enabled ones
         List<AiProvider> providers = new ArrayList<>();
-        for (String name : plugin.getConfig().getStringList("admin-ai|provider-order"))
+        ConfigurationSection parent = plugin.getConfig().getConfigurationSection("admin-ai|approval-providers");
+        if (parent == null)
+            return providers;
+        for (String name : parent.getKeys(false))
         {
-            ConfigurationSection section = plugin.getConfig().getConfigurationSection("admin-ai|providers|" + name);
+            ConfigurationSection section = parent.getConfigurationSection(name);
+            if (section == null || !section.getBoolean("enabled"))
+                continue;
+            providers.add(new AiProvider(
+                    name,
+                    section.getString("protocol", "openai-chat-completions"),
+                    section.getString("endpoint", ""),
+                    section.getString("model", ""),
+                    section.getString("api-key", ""),
+                    section.getInt("timeout-seconds", 30)
+            ));
+        }
+        return providers;
+    }
+
+    private List<AiProvider> loadProviders(String sectionPath, String orderPath)
+    {
+        List<AiProvider> providers = new ArrayList<>();
+        for (String name : plugin.getConfig().getStringList(orderPath))
+        {
+            ConfigurationSection section = plugin.getConfig().getConfigurationSection(sectionPath + "|" + name);
             if (section == null || !section.getBoolean("enabled"))
                 continue;
             providers.add(new AiProvider(
