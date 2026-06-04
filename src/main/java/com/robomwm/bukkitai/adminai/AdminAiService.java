@@ -5,6 +5,9 @@ import com.google.gson.JsonSyntaxException;
 import com.robomwm.bukkitai.BukkitAI;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import com.destroystokyo.paper.event.server.ServerExceptionEvent;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -22,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
-class AdminAiService
+class AdminAiService implements Listener
 {
     private final BukkitAI plugin;
     private final AdminAiConfig config;
@@ -39,6 +42,7 @@ class AdminAiService
         this.plugin = plugin;
         this.config = new AdminAiConfig(plugin);
         this.approvalClient = new ApprovalAiClient(client, config, plugin.getLogger());
+        plugin.getServer().getPluginManager().registerEvents(this, plugin);
         scheduleMaintenanceCheck();
     }
 
@@ -48,6 +52,15 @@ class AdminAiService
             if (config.isEnabled())
                 run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true);
         }, 1200L); // 1 minute after startup
+    }
+
+    @EventHandler
+    public void onServerException(ServerExceptionEvent event)
+    {
+        if (!config.isEnabled()) return;
+        String msg = event.getException().getMessage();
+        if (msg == null) msg = event.getException().getClass().getSimpleName();
+        run(plugin.getServer().getConsoleSender(), "An exception occurred: " + msg + ". Please check logs and investigate.", true);
     }
 
     String getStatus()
@@ -243,10 +256,11 @@ class AdminAiService
         {
             case "read_log" -> "RESULT read_log\n" + readAllowedFile(action.path, true);
             case "read_file" -> "RESULT read_file\n" + readAllowedFile(action.path, false);
-            case "write_file" -> "RESULT write_file\n" + writeAllowedFile(action.path, action.content);
+            case "write_file" -> "RESULT write_file\n" + writeAllowedFile(action.path, action.content, false);
+            case "append_file" -> "RESULT append_file\n" + writeAllowedFile(action.path, action.content, true);
             case "run_command" -> "RESULT run_command\n" + runCommand(action.command);
             case "finish" -> "RESULT finish accepted";
-            default -> "RESULT error\nUnknown action. Use read_log, read_file, write_file, run_command, finish.";
+            default -> "RESULT error\nUnknown action. Use read_log, read_file, write_file, append_file, run_command, finish.";
         };
     }
 
@@ -313,7 +327,7 @@ class AdminAiService
         return truncate(new String(bytes, StandardCharsets.UTF_8), maxBytes);
     }
 
-    private String writeAllowedFile(String path, String content) throws IOException
+    private String writeAllowedFile(String path, String content, boolean append) throws IOException
     {
         if (content == null)
             content = "";
@@ -321,8 +335,12 @@ class AdminAiService
             return "Write blocked: content exceeds max-file-bytes.";
         Path resolved = resolveAllowedPath(path, false);
         Files.createDirectories(resolved.getParent());
-        Files.writeString(resolved, content, StandardCharsets.UTF_8);
-        return "Wrote " + resolved;
+        if (append && Files.exists(resolved)) {
+            Files.writeString(resolved, content + "\n", StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.APPEND);
+        } else {
+            Files.writeString(resolved, content, StandardCharsets.UTF_8);
+        }
+        return (append ? "Appended to " : "Wrote ") + resolved;
     }
 
     private Path resolveAllowedPath(String path, boolean logOnly) throws IOException
@@ -396,12 +414,17 @@ class AdminAiService
     {
         return """
                 You are an autonomous Minecraft server admin maintenance agent running inside a Bukkit plugin.
-                Your job: inspect logs/source, run allowed commands, fix source files only when needed, commit and push only when the task requires it.
+                The server is experimental, testing lots of plugins (minigames, admin tools, etc.).
+                Your job: inspect logs/source, help maintain the server, seek out new forks of plugins if existing ones are unmaintained.
+                If a task is too big and there are no suitable forks, propose a plan and save it to a file.
+                IMPORTANT: Keep notes! Use `append_file` to write your notes, suggestions, or proposed plans to `~/a/ai-notes.md` so the admin can review them later and implement fixes themselves. Act as a semi-self-learning assistant.
+                
                 You must respond with exactly one JSON object and no prose.
                 Valid actions:
                 {"action":"read_log","path":"/absolute/log/path"}
                 {"action":"read_file","path":"relative/or/absolute/path"}
                 {"action":"write_file","path":"relative/or/absolute/path","content":"full new file content"}
+                {"action":"append_file","path":"relative/or/absolute/path","content":"content to append"}
                 {"action":"run_command","command":"allowed command"}
                 {"action":"finish","message":"summary"}
                 Safety & Tools:
@@ -473,7 +496,7 @@ class AdminAiService
 
     private boolean isDestructive(String actionName)
     {
-        return "write_file".equals(actionName) || "run_command".equals(actionName);
+        return "write_file".equals(actionName) || "append_file".equals(actionName) || "run_command".equals(actionName);
     }
 
     private String truncate(String input, int max)
