@@ -187,7 +187,7 @@ class AdminAiService implements Listener
 
         try
         {
-            for (int i = 0; i < config.getInt("admin-ai|max-iterations"); i++)
+            for (int i = 0; i < config.getInt("admin-ai.max-iterations"); i++)
             {
                 ensureStillEnabled();
                 String response = completeWithFallback(messages);
@@ -302,12 +302,12 @@ class AdminAiService implements Listener
         List<String> tokens = CommandLine.split(command);
         Path outputFile = Files.createTempFile("bukkitai-adminai-", ".log");
         ProcessBuilder builder = new ProcessBuilder(tokens);
-        builder.directory(Path.of(config.getString("admin-ai|actions|working-directory")).toFile());
+        builder.directory(Path.of(config.getString("admin-ai.actions|working-directory")).toFile());
         builder.redirectErrorStream(true);
         builder.redirectOutput(outputFile.toFile());
         Process process = builder.start();
         currentProcess.set(process);
-        boolean done = process.waitFor(config.getInt("admin-ai|max-command-seconds"), TimeUnit.SECONDS);
+        boolean done = process.waitFor(config.getInt("admin-ai.max-command-seconds"), TimeUnit.SECONDS);
         currentProcess.compareAndSet(process, null);
         if (!done)
         {
@@ -323,12 +323,12 @@ class AdminAiService implements Listener
     private boolean isCommandAllowed(String command)
     {
         String padded = " " + command.toLowerCase(Locale.ROOT) + " ";
-        for (String denied : config.getStringList("admin-ai|actions|denied-command-contains"))
+        for (String denied : config.getStringList("admin-ai.actions|denied-command-contains"))
             if (padded.contains(denied.toLowerCase(Locale.ROOT)))
                 return false;
 
         List<String> commandTokens = CommandLine.split(command);
-        for (String prefix : config.getStringList("admin-ai|actions|allowed-command-prefixes"))
+        for (String prefix : config.getStringList("admin-ai.actions|allowed-command-prefixes"))
         {
             List<String> prefixTokens = CommandLine.split(prefix);
             if (commandTokens.size() < prefixTokens.size())
@@ -348,9 +348,9 @@ class AdminAiService implements Listener
         Path resolved = resolveAllowedPath(path, logOnly);
         if (!Files.exists(resolved))
             return "File does not exist: " + resolved;
-        int maxBytes = config.getInt("admin-ai|max-file-bytes");
+        int maxBytes = config.getInt("admin-ai.max-file-bytes");
         if (logOnly)
-            return tail(resolved, config.getInt("admin-ai|log-tail-lines"), maxBytes);
+            return tail(resolved, config.getInt("admin-ai.log-tail-lines"), maxBytes);
         byte[] bytes = Files.readAllBytes(resolved);
         return truncate(new String(bytes, StandardCharsets.UTF_8), maxBytes);
     }
@@ -359,7 +359,7 @@ class AdminAiService implements Listener
     {
         if (content == null)
             content = "";
-        if (content.getBytes(StandardCharsets.UTF_8).length > config.getInt("admin-ai|max-file-bytes"))
+        if (content.getBytes(StandardCharsets.UTF_8).length > config.getInt("admin-ai.max-file-bytes"))
             return "Write blocked: content exceeds max-file-bytes.";
         Path resolved = resolveAllowedPath(path, false);
         Files.createDirectories(resolved.getParent());
@@ -375,10 +375,10 @@ class AdminAiService implements Listener
     {
         Path raw = Path.of(path);
         if (!raw.isAbsolute())
-            raw = Path.of(config.getString("admin-ai|actions|working-directory")).resolve(raw);
+            raw = Path.of(config.getString("admin-ai.actions|working-directory")).resolve(raw);
         Path resolved = Files.exists(raw) ? raw.toRealPath().normalize() : raw.toAbsolutePath().normalize();
 
-        List<String> roots = logOnly ? config.getStringList("admin-ai|actions|log-files") : config.getStringList("admin-ai|actions|source-roots");
+        List<String> roots = logOnly ? config.getStringList("admin-ai.actions|log-files") : config.getStringList("admin-ai.actions|source-roots");
         for (String root : roots)
         {
             Path allowed = Path.of(root).toAbsolutePath().normalize();
@@ -435,7 +435,7 @@ class AdminAiService implements Listener
     private String buildInitialPrompt(String userPrompt)
     {
         return "Task requested at " + Instant.now() + " UTC:\n" + userPrompt + "\n\nConfigured log files:\n"
-                + String.join("\n", config.getStringList("admin-ai|actions|log-files"));
+                + String.join("\n", config.getStringList("admin-ai.actions|log-files"));
     }
 
     private String systemPrompt()

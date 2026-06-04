@@ -127,15 +127,15 @@ class ApprovalAiClient
         }
 
         sb.append("\n## Allowed command prefixes\n");
-        for (String prefix : config.getStringList("admin-ai|actions|allowed-command-prefixes"))
+        for (String prefix : config.getStringList("admin-ai.actions|allowed-command-prefixes"))
             sb.append("- `").append(prefix).append("`\n");
 
         sb.append("\n## Denied command substrings\n");
-        for (String denied : config.getStringList("admin-ai|actions|denied-command-contains"))
+        for (String denied : config.getStringList("admin-ai.actions|denied-command-contains"))
             sb.append("- `").append(denied).append("`\n");
 
         sb.append("\n## Allowed source roots\n");
-        for (String root : config.getStringList("admin-ai|actions|source-roots"))
+        for (String root : config.getStringList("admin-ai.actions|source-roots"))
             sb.append("- `").append(root).append("`\n");
 
         // Include last few conversation messages for context
