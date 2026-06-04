@@ -1,0 +1,10 @@
+name: bukkitai
+version: 1.0.0
+main: com.robomwm.bukkitai.BukkitAI
+api-version: '1.20'
+author: RoboMWM
+commands:
+  adminai:
+    description: Admin AI maintenance tools.
+    usage: /<command> <on|off|status|reload|abort|run <prompt>|approve|deny|interactive [on|off]>
+    permission: mlg.admin
