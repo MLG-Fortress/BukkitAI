@@ -23,7 +23,10 @@ class OpenAiCompatibleClient
     String complete(AiProvider provider, List<AiMessage> messages) throws IOException, InterruptedException
     {
         JsonObject requestBody = new JsonObject();
-        requestBody.addProperty("model", provider.model());
+        String model = provider.model();
+        if (model == null || model.isBlank())
+            throw new IOException("Provider " + provider.name() + " has no model configured.");
+        requestBody.addProperty("model", model);
         requestBody.add("messages", gson.toJsonTree(messages));
         requestBody.addProperty("stream", false);
         if ("simple-chat-api".equalsIgnoreCase(provider.protocol()))
@@ -33,7 +36,13 @@ class OpenAiCompatibleClient
         else
             requestBody.addProperty("temperature", 0.1);
 
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(provider.endpoint()))
+        String endpoint = provider.endpoint();
+        if (endpoint == null || endpoint.isBlank())
+            throw new IOException("Provider " + provider.name() + " has no endpoint configured.");
+
+        System.out.println("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
+
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(provider.timeoutSeconds()))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(requestBody)));
