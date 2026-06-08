@@ -52,9 +52,17 @@ class OpenAiCompatibleClient
 
         HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 200 || response.statusCode() >= 300)
-            throw new IOException(provider.name() + " returned HTTP " + response.statusCode() + ": " + truncate(response.body(), 500));
+        {
+            String body = response.body();
+            String message = (body != null && !body.isBlank()) ? body : "HTTP " + response.statusCode();
+            throw new IOException(provider.name() + " returned HTTP " + response.statusCode() + ": " + truncate(message, 500));
+        }
 
-        JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
+        String responseBody = response.body();
+        if (responseBody == null || responseBody.isBlank())
+            throw new IOException(provider.name() + " returned empty response.");
+            
+        JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
         if (json.has("choices"))
         {
             JsonArray choices = json.getAsJsonArray("choices");
