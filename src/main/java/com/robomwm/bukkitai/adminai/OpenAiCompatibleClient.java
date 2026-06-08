@@ -88,7 +88,9 @@ class OpenAiCompatibleClient
         }
         catch (Exception e)
         {
-            System.err.println("DEBUG: Exception during HTTP request: " + e.getMessage());
+            String message = e.getMessage();
+            if (message == null) message = e.getClass().getName();
+            System.err.println("DEBUG: Exception during HTTP request: " + message);
             e.printStackTrace();
             throw e;
         }
