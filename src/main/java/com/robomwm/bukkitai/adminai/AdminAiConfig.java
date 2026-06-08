@@ -45,12 +45,12 @@ class AdminAiConfig
         config.addDefault("admin-ai.providers.ollama.timeout-seconds", 90);
 
         // Dedicated approval provider (optional — falls back to regular providers if none enabled)
-        config.addDefault("admin-ai.approval-providers.ollama.enabled", false);
+        config.addDefault("admin-ai.approval-providers.ollama.enabled", true);
         config.addDefault("admin-ai.approval-providers.ollama.protocol", "ollama-native");
         config.addDefault("admin-ai.approval-providers.ollama.endpoint", "http://localhost:4000/api/chat");
         config.addDefault("admin-ai.approval-providers.ollama.model", "qwen2.5-coder:latest");
         config.addDefault("admin-ai.approval-providers.ollama.api-key", "ollama");
-        config.addDefault("admin-ai.approval-providers.ollama.timeout-seconds", 30);
+        config.addDefault("admin-ai.approval-providers.ollama.timeout-seconds", 90);
 
         File dataFolder = plugin.getDataFolder().getAbsoluteFile();
         File pluginsFolder = dataFolder.getParentFile();
