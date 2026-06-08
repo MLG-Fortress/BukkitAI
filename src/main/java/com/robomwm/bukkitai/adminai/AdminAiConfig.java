@@ -52,7 +52,10 @@ class AdminAiConfig
         config.addDefault("admin-ai.approval-providers.ollama.api-key", "ollama");
         config.addDefault("admin-ai.approval-providers.ollama.timeout-seconds", 30);
 
-        String rootDir = plugin.getDataFolder().getParentFile().getParentFile().getPath();
+        File dataFolder = plugin.getDataFolder().getAbsoluteFile();
+        File pluginsFolder = dataFolder.getParentFile();
+        File rootFolder = (pluginsFolder != null) ? pluginsFolder.getParentFile() : null;
+        String rootDir = (rootFolder != null) ? rootFolder.getPath() : dataFolder.getPath();
         config.addDefault("admin-ai.actions.working-directory", rootDir);
         config.addDefault("admin-ai.actions.source-roots", List.of(rootDir));
         config.addDefault("admin-ai.actions.log-files", List.of("logs/latest.log"));
