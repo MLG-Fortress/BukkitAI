@@ -38,16 +38,16 @@ class AdminAiConfig
         config.addDefault("admin-ai.provider-order", List.of("ollama"));
 
         config.addDefault("admin-ai.providers.ollama.enabled", true);
-        config.addDefault("admin-ai.providers.ollama.protocol", "openai-chat-completions");
-        config.addDefault("admin-ai.providers.ollama.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
+        config.addDefault("admin-ai.providers.ollama.protocol", "ollama-native");
+        config.addDefault("admin-ai.providers.ollama.endpoint", "http://localhost:4000/api/chat");
         config.addDefault("admin-ai.providers.ollama.model", "qwen2.5-coder:latest");
         config.addDefault("admin-ai.providers.ollama.api-key", "ollama");
         config.addDefault("admin-ai.providers.ollama.timeout-seconds", 90);
 
         // Dedicated approval provider (optional — falls back to regular providers if none enabled)
         config.addDefault("admin-ai.approval-providers.ollama.enabled", false);
-        config.addDefault("admin-ai.approval-providers.ollama.protocol", "openai-chat-completions");
-        config.addDefault("admin-ai.approval-providers.ollama.endpoint", "http://127.0.0.1:11434/v1/chat/completions");
+        config.addDefault("admin-ai.approval-providers.ollama.protocol", "ollama-native");
+        config.addDefault("admin-ai.approval-providers.ollama.endpoint", "http://localhost:4000/api/chat");
         config.addDefault("admin-ai.approval-providers.ollama.model", "qwen2.5-coder:latest");
         config.addDefault("admin-ai.approval-providers.ollama.api-key", "ollama");
         config.addDefault("admin-ai.approval-providers.ollama.timeout-seconds", 30);
@@ -146,7 +146,7 @@ class AdminAiConfig
                 continue;
             providers.add(new AiProvider(
                     name,
-                    section.getString("protocol", "openai-chat-completions"),
+                    section.getString("protocol", "ollama-native"),
                     section.getString("endpoint", ""),
                     section.getString("model", ""),
                     section.getString("api-key", ""),
@@ -166,7 +166,7 @@ class AdminAiConfig
                 continue;
             providers.add(new AiProvider(
                     name,
-                    section.getString("protocol", "openai-chat-completions"),
+                    section.getString("protocol", "ollama-native"),
                     section.getString("endpoint", ""),
                     section.getString("model", ""),
                     section.getString("api-key", ""),

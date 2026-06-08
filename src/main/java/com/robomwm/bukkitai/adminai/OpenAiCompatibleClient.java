@@ -28,6 +28,8 @@ class OpenAiCompatibleClient
         requestBody.addProperty("stream", false);
         if ("simple-chat-api".equalsIgnoreCase(provider.protocol()))
             requestBody.addProperty("message", messages.get(messages.size() - 1).content());
+        else if ("ollama-native".equalsIgnoreCase(provider.protocol()) || "ollama".equalsIgnoreCase(provider.protocol()))
+            requestBody.add("options", gson.toJsonTree(java.util.Map.of("temperature", 0.1)));
         else
             requestBody.addProperty("temperature", 0.1);
 
