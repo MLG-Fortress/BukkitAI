@@ -50,37 +50,48 @@ class OpenAiCompatibleClient
         if (!provider.apiKey().isBlank())
             requestBuilder.header("Authorization", "Bearer " + provider.apiKey());
 
-        HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() < 200 || response.statusCode() >= 300)
+        try
         {
-            String body = response.body();
-            String errorMessage = provider.name() + " returned HTTP " + response.statusCode() + ": " + body;
-            System.err.println("DEBUG: " + errorMessage); // Log to stderr for server console visibility
-            throw new IOException(errorMessage);
-        }
+            HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300)
+            {
+                String body = response.body();
+                String errorMessage = provider.name() + " returned HTTP " + response.statusCode() + ": " + body;
+                System.err.println("DEBUG: " + errorMessage); // Log to stderr for server console visibility
+                throw new IOException(errorMessage);
+            }
 
-        String responseBody = response.body();
-        if (responseBody == null || responseBody.isBlank())
-            throw new IOException(provider.name() + " returned empty response.");
+            String responseBody = response.body();
+            if (responseBody == null || responseBody.isBlank())
+                throw new IOException(provider.name() + " returned empty response.");
             
-        JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
-        if (json.has("choices"))
-        {
-            JsonArray choices = json.getAsJsonArray("choices");
-            if (!choices.isEmpty())
-                return choices.get(0).getAsJsonObject().getAsJsonObject("message").get("content").getAsString();
+            JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
+            // ... (rest of parsing logic)
+            // Need to reconstruct the rest of the file logic here exactly.
+            if (json.has("choices"))
+            {
+                JsonArray choices = json.getAsJsonArray("choices");
+                if (!choices.isEmpty())
+                    return choices.get(0).getAsJsonObject().getAsJsonObject("message").get("content").getAsString();
+            }
+            if (json.has("message") && json.get("message").isJsonObject())
+                return json.getAsJsonObject("message").get("content").getAsString();
+            if (json.has("message") && json.get("message").isJsonPrimitive())
+                return json.get("message").getAsString();
+            if (json.has("content"))
+                return json.get("content").getAsString();
+            if (json.has("response"))
+                return json.get("response").getAsString();
+            if (json.has("text"))
+                return json.get("text").getAsString();
+            throw new IOException(provider.name() + " response had no chat content.");
         }
-        if (json.has("message") && json.get("message").isJsonObject())
-            return json.getAsJsonObject("message").get("content").getAsString();
-        if (json.has("message") && json.get("message").isJsonPrimitive())
-            return json.get("message").getAsString();
-        if (json.has("content"))
-            return json.get("content").getAsString();
-        if (json.has("response"))
-            return json.get("response").getAsString();
-        if (json.has("text"))
-            return json.get("text").getAsString();
-        throw new IOException(provider.name() + " response had no chat content.");
+        catch (Exception e)
+        {
+            System.err.println("DEBUG: Exception during HTTP request: " + e.getMessage());
+            e.printStackTrace();
+            throw e;
+        }
     }
 
     private String truncate(String input, int max)
