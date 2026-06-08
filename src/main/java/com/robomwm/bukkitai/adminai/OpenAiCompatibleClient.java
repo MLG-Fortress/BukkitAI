@@ -54,8 +54,9 @@ class OpenAiCompatibleClient
         if (response.statusCode() < 200 || response.statusCode() >= 300)
         {
             String body = response.body();
-            String message = (body != null && !body.isBlank()) ? body : "HTTP " + response.statusCode();
-            throw new IOException(provider.name() + " returned HTTP " + response.statusCode() + ": " + truncate(message, 500));
+            String errorMessage = provider.name() + " returned HTTP " + response.statusCode() + ": " + body;
+            System.err.println("DEBUG: " + errorMessage); // Log to stderr for server console visibility
+            throw new IOException(errorMessage);
         }
 
         String responseBody = response.body();
