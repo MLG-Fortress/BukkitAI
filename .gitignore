@@ -70,3 +70,4 @@ target/
 *.iml
 *.idea/
 .codex
+secrets.properties

@@ -11,11 +11,13 @@ import java.util.List;
 class AdminAiConfig
 {
     private final BukkitAI plugin;
+    private final java.util.Properties secrets = new java.util.Properties();
 
     AdminAiConfig(BukkitAI plugin)
     {
         this.plugin = plugin;
         plugin.reloadConfig();
+        loadSecrets();
         installDefaults();
         plugin.saveConfig();
     }
@@ -23,7 +25,41 @@ class AdminAiConfig
     void reload()
     {
         plugin.reloadConfig();
+        loadSecrets();
         installDefaults();
+    }
+
+    private void loadSecrets()
+    {
+        secrets.clear();
+        File file = new File(plugin.getDataFolder(), "secrets.properties");
+        if (!file.exists())
+        {
+            try
+            {
+                plugin.getDataFolder().mkdirs();
+                file.createNewFile();
+                java.io.PrintWriter writer = new java.io.PrintWriter(file);
+                writer.println("# API keys and sensitive credentials");
+                writer.println("# Format: provider_name.api-key=your_key");
+                writer.println("ollama.api-key=ollama");
+                writer.println("arliai.api-key=YOUR_ARLIAI_KEY");
+                writer.close();
+            }
+            catch (java.io.IOException e)
+            {
+                plugin.getLogger().warning("Could not create secrets.properties: " + e.getMessage());
+            }
+        }
+
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(file))
+        {
+            secrets.load(fis);
+        }
+        catch (java.io.IOException e)
+        {
+            plugin.getLogger().warning("Could not load secrets.properties: " + e.getMessage());
+        }
     }
 
     private void installDefaults()
@@ -194,7 +230,7 @@ class AdminAiConfig
                     section.getString("protocol", "ollama-native"),
                     section.getString("endpoint", ""),
                     section.getString("model", ""),
-                    section.getString("api-key", ""),
+                    secrets.getProperty(name + ".api-key", ""),
                     section.getInt("timeout-seconds", 90),
                     sampling
             ));
