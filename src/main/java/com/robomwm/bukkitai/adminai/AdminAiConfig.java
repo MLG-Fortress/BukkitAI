@@ -48,14 +48,17 @@ class AdminAiConfig
         config.set("admin-ai.log-tail-lines", old.getInt("admin-ai.log-tail-lines", 200));
         config.set("admin-ai.approval-mode", old.getString("admin-ai.approval-mode", "human"));
         config.set("admin-ai.approval-timeout-minutes", old.getInt("admin-ai.approval-timeout-minutes", 5));
-        config.set("admin-ai.provider-order", old.getList("admin-ai.provider-order", List.of("ollama")));
+        config.set("admin-ai.provider-order", old.getList("admin-ai.provider-order", List.of("ollama", "arliai")));
 
         // Dynamic sections: providers
         ConfigurationSection providers = old.getConfigurationSection("admin-ai.providers");
         if (providers != null)
             config.set("admin-ai.providers", providers);
         else
+        {
             installDefaultOllama(config, "admin-ai.providers.ollama");
+            installDefaultArliAI(config, "admin-ai.providers.arliai");
+        }
 
         // Dynamic sections: approval-providers
         ConfigurationSection approvalProviders = old.getConfigurationSection("admin-ai.approval-providers");
@@ -93,6 +96,20 @@ class AdminAiConfig
         config.set(path + ".model", "llama3.2:3b");
         config.set(path + ".api-key", "ollama");
         config.set(path + ".timeout-seconds", 90);
+    }
+
+    private void installDefaultArliAI(ConfigurationSection config, String path)
+    {
+        config.set(path + ".enabled", true);
+        config.set(path + ".protocol", "openai-compatible");
+        config.set(path + ".endpoint", "https://api.arliai.com/v1/chat/completions");
+        config.set(path + ".model", "Qwen3.5-27B-Derestricted");
+        config.set(path + ".api-key", "arliai");
+        config.set(path + ".timeout-seconds", 90);
+        config.set(path + ".sampling.temperature", 0.7);
+        config.set(path + ".sampling.top_p", 0.8);
+        config.set(path + ".sampling.top_k", 20);
+        config.set(path + ".sampling.presence_penalty", 1.5);
     }
 
     File getRootFolder()
@@ -176,13 +193,21 @@ class AdminAiConfig
             ConfigurationSection section = parent.getConfigurationSection(name);
             if (section == null || !section.getBoolean("enabled"))
                 continue;
+            
+            java.util.Map<String, Object> sampling = new java.util.HashMap<>();
+            ConfigurationSection samplingSection = section.getConfigurationSection("sampling");
+            if (samplingSection != null)
+                for (String key : samplingSection.getKeys(false))
+                    sampling.put(key, samplingSection.get(key));
+
             providers.add(new AiProvider(
                     name,
                     section.getString("protocol", "ollama-native"),
                     section.getString("endpoint", ""),
                     section.getString("model", ""),
                     section.getString("api-key", ""),
-                    section.getInt("timeout-seconds", 30)
+                    section.getInt("timeout-seconds", 30),
+                    sampling
             ));
         }
         return providers;
@@ -196,13 +221,21 @@ class AdminAiConfig
             ConfigurationSection section = plugin.getConfig().getConfigurationSection(sectionPath + "." + name);
             if (section == null || !section.getBoolean("enabled"))
                 continue;
+
+            java.util.Map<String, Object> sampling = new java.util.HashMap<>();
+            ConfigurationSection samplingSection = section.getConfigurationSection("sampling");
+            if (samplingSection != null)
+                for (String key : samplingSection.getKeys(false))
+                    sampling.put(key, samplingSection.get(key));
+
             providers.add(new AiProvider(
                     name,
                     section.getString("protocol", "ollama-native"),
                     section.getString("endpoint", ""),
                     section.getString("model", ""),
                     section.getString("api-key", ""),
-                    section.getInt("timeout-seconds", 90)
+                    section.getInt("timeout-seconds", 90),
+                    sampling
             ));
         }
         return providers;

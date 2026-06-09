@@ -32,9 +32,26 @@ class OpenAiCompatibleClient
         if ("simple-chat-api".equalsIgnoreCase(provider.protocol()))
             requestBody.addProperty("message", messages.get(messages.size() - 1).content());
         else if ("ollama-native".equalsIgnoreCase(provider.protocol()) || "ollama".equalsIgnoreCase(provider.protocol()))
-            requestBody.add("options", gson.toJsonTree(java.util.Map.of("temperature", 0.1)));
+        {
+            java.util.Map<String, Object> options = new java.util.HashMap<>();
+            options.put("temperature", 0.1);
+            options.putAll(provider.sampling());
+            requestBody.add("options", gson.toJsonTree(options));
+        }
         else
-            requestBody.addProperty("temperature", 0.1);
+        {
+            if (provider.endpoint().contains("arliai.com"))
+            {
+                requestBody.addProperty("output_kind", "delta");
+                requestBody.add("chat_template_kwargs", gson.toJsonTree(java.util.Map.of("enable_thinking", false)));
+            }
+            else
+                requestBody.addProperty("temperature", 0.1);
+
+            // Apply custom sampling overrides
+            for (java.util.Map.Entry<String, Object> entry : provider.sampling().entrySet())
+                requestBody.add(entry.getKey(), gson.toJsonTree(entry.getValue()));
+        }
 
         String endpoint = provider.endpoint();
         if (endpoint == null || endpoint.isBlank())
