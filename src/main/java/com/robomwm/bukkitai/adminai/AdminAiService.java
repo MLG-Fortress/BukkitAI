@@ -302,7 +302,7 @@ class AdminAiService implements Listener
         List<String> tokens = CommandLine.split(command);
         Path outputFile = Files.createTempFile("bukkitai-adminai-", ".log");
         ProcessBuilder builder = new ProcessBuilder(tokens);
-        builder.directory(Path.of(config.getString("admin-ai.actions|working-directory")).toFile());
+        builder.directory(config.getRootFolder());
         builder.redirectErrorStream(true);
         builder.redirectOutput(outputFile.toFile());
         Process process = builder.start();
@@ -375,20 +375,27 @@ class AdminAiService implements Listener
     {
         Path raw = Path.of(path);
         if (!raw.isAbsolute())
-            raw = Path.of(config.getString("admin-ai.actions|working-directory")).resolve(raw);
+            raw = config.getRootFolder().toPath().resolve(raw);
         Path resolved = Files.exists(raw) ? raw.toRealPath().normalize() : raw.toAbsolutePath().normalize();
 
-        List<String> roots = logOnly ? config.getStringList("admin-ai.actions|log-files") : config.getStringList("admin-ai.actions|source-roots");
-        for (String root : roots)
+        if (logOnly)
         {
-            Path allowed = Path.of(root).toAbsolutePath().normalize();
-            if (logOnly)
+            List<String> logs = config.getStringList("admin-ai.actions.log-files");
+            for (String log : logs)
             {
+                Path allowed = Path.of(log).toAbsolutePath().normalize();
                 if (resolved.equals(allowed))
                     return resolved;
             }
-            else if (resolved.startsWith(allowed))
-                return resolved;
+        }
+        else
+        {
+            for (java.io.File root : config.getSourceRoots())
+            {
+                Path allowed = root.toPath().toAbsolutePath().normalize();
+                if (resolved.startsWith(allowed))
+                    return resolved;
+            }
         }
         throw new IOException("Path blocked by admin-ai path policy: " + path);
     }

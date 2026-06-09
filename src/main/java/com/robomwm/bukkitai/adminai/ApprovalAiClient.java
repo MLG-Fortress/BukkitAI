@@ -135,8 +135,8 @@ class ApprovalAiClient
             sb.append("- `").append(denied).append("`\n");
 
         sb.append("\n## Allowed source roots\n");
-        for (String root : config.getStringList("admin-ai.actions|source-roots"))
-            sb.append("- `").append(root).append("`\n");
+        for (java.io.File root : config.getSourceRoots())
+            sb.append("- `").append(root.getPath()).append("`\n");
 
         // Include last few conversation messages for context
         sb.append("\n## Recent conversation context\n");

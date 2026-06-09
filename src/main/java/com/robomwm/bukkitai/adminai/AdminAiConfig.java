@@ -53,11 +53,6 @@ class AdminAiConfig
         config.addDefault("admin-ai.approval-providers.ollama.timeout-seconds", 90);
 
         File dataFolder = plugin.getDataFolder().getAbsoluteFile();
-        File pluginsFolder = dataFolder.getParentFile();
-        File rootFolder = (pluginsFolder != null) ? pluginsFolder.getParentFile() : null;
-        String rootDir = (rootFolder != null) ? rootFolder.getPath() : dataFolder.getPath();
-        config.addDefault("admin-ai.actions.working-directory", rootDir);
-        config.addDefault("admin-ai.actions.source-roots", List.of(rootDir));
         config.addDefault("admin-ai.actions.log-files", List.of("logs/latest.log"));
         config.addDefault("admin-ai.actions.allowed-command-prefixes", List.of(
                 "git status",
@@ -78,6 +73,23 @@ class AdminAiConfig
         config.options().copyDefaults(true);
         plugin.getDataFolder().mkdirs();
         plugin.saveConfig();
+    }
+
+    File getRootFolder()
+    {
+        File root = plugin.getServer().getWorldContainer().getAbsoluteFile();
+        if (root.exists())
+            return root;
+
+        File dataFolder = plugin.getDataFolder().getAbsoluteFile();
+        File pluginsFolder = dataFolder.getParentFile();
+        File rootFolder = (pluginsFolder != null) ? pluginsFolder.getParentFile() : null;
+        return (rootFolder != null) ? rootFolder : dataFolder;
+    }
+
+    List<File> getSourceRoots()
+    {
+        return List.of(getRootFolder());
     }
 
     boolean isEnabled()
