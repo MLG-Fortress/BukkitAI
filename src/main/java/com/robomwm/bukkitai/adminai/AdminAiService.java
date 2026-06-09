@@ -14,10 +14,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -247,6 +250,14 @@ class AdminAiService implements Listener
         {
             String approvalMode = config.getApprovalMode();
             boolean needsApproval = config.isInteractive() || proactive;
+            String approvalFingerprint = approvalFingerprint(actionName, action, proactive);
+            if (config.alwaysApproveApprovedActions() && config.getApprovedActions().contains(approvalFingerprint))
+            {
+                broadcastApprovalResult(actionName, action, proactive, new ApprovalAiClient.ApprovalResult(true, "Previously approved; auto-approved from config."));
+                logApproval("config", actionName, action, proactive, "Previously approved; auto-approved from config.", approvalFingerprint);
+            }
+            else
+            {
 
             // In AI mode, always evaluate via AI (regardless of interactive flag)
             if ("ai".equals(approvalMode))
@@ -255,6 +266,7 @@ class AdminAiService implements Listener
                 broadcastApprovalResult(actionName, action, proactive, result);
                 if (!result.approved())
                     return "RESULT error\nAction denied by approval AI: " + result.reason();
+                recordApproval("ai", actionName, action, proactive, result.reason(), approvalFingerprint);
             }
             else if ("ai-fallback-human".equals(approvalMode))
             {
@@ -265,12 +277,14 @@ class AdminAiService implements Listener
                     String humanResult = requestHumanApproval(actionName, action, proactive);
                     if (humanResult != null)
                         return humanResult;
+                    recordApproval("human", actionName, action, proactive, "Fallback approval after AI unavailable.", approvalFingerprint);
                 }
                 else
                 {
                     broadcastApprovalResult(actionName, action, proactive, result);
                     if (!result.approved())
                         return "RESULT error\nAction denied by approval AI: " + result.reason();
+                    recordApproval("ai", actionName, action, proactive, result.reason(), approvalFingerprint);
                 }
             }
             else if (needsApproval) // "human" mode
@@ -278,6 +292,8 @@ class AdminAiService implements Listener
                 String humanResult = requestHumanApproval(actionName, action, proactive);
                 if (humanResult != null)
                     return humanResult;
+                recordApproval("human", actionName, action, proactive, "Human approval granted.", approvalFingerprint);
+            }
             }
         }
 
@@ -526,6 +542,60 @@ class AdminAiService implements Listener
             return "RESULT error\nApproval process interrupted.";
         }
         return null; // approved
+    }
+
+    private void recordApproval(String approvalSource, String actionName, AiAction action, boolean proactive, String reason, String fingerprint)
+    {
+        if (!config.alwaysApproveApprovedActions())
+            return;
+        config.addApprovedAction(fingerprint);
+        logApproval(approvalSource, actionName, action, proactive, reason, fingerprint);
+    }
+
+    private void logApproval(String approvalSource, String actionName, AiAction action, boolean proactive, String reason, String fingerprint)
+    {
+        Path logFile = config.getRootFolder().toPath().resolve(config.getApprovalLogFile()).toAbsolutePath().normalize();
+        try
+        {
+            Files.createDirectories(logFile.getParent());
+            String details = switch (actionName)
+            {
+                case "run_command" -> " command=" + nullToEmpty(action.command);
+                case "write_file", "append_file" -> " path=" + nullToEmpty(action.path) + " content_sha256=" + sha256(nullToEmpty(action.content));
+                default -> "";
+            };
+            String line = Instant.now() + " source=" + approvalSource + " proactive=" + proactive + " action=" + actionName
+                    + details + " fingerprint=" + fingerprint + " reason=" + reason.replace('\n', ' ');
+            Files.writeString(logFile, line + System.lineSeparator(), StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        }
+        catch (IOException e)
+        {
+            plugin.getLogger().warning("Could not write approval log: " + e.getMessage());
+        }
+    }
+
+    private String approvalFingerprint(String actionName, AiAction action, boolean proactive)
+    {
+        String payload = actionName + "|" + proactive + "|" + nullToEmpty(action.path) + "|" + nullToEmpty(action.command) + "|"
+                + sha256(nullToEmpty(action.content));
+        return sha256(payload);
+    }
+
+    private String sha256(String input)
+    {
+        try
+        {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes)
+                sb.append(String.format("%02x", b));
+            return sb.toString();
+        }
+        catch (NoSuchAlgorithmException e)
+        {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     private void broadcastApprovalResult(String actionName, AiAction action, boolean proactive, ApprovalAiClient.ApprovalResult result)
