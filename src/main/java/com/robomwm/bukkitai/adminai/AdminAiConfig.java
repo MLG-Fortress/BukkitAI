@@ -29,34 +29,43 @@ class AdminAiConfig
     private void installDefaults()
     {
         FileConfiguration config = plugin.getConfig();
-        config.addDefault("admin-ai.enabled", false);
-        config.addDefault("admin-ai.interactive", true);
-        config.addDefault("admin-ai.max-iterations", 12);
-        config.addDefault("admin-ai.max-command-seconds", 300);
-        config.addDefault("admin-ai.max-file-bytes", 65536);
-        config.addDefault("admin-ai.log-tail-lines", 200);
-        config.addDefault("admin-ai.approval-mode", "human"); // human, ai, ai-fallback-human
-        config.addDefault("admin-ai.approval-timeout-minutes", 5);
-        config.addDefault("admin-ai.provider-order", List.of("ollama"));
+        
+        // Copy existing values to temporary storage
+        org.bukkit.configuration.MemoryConfiguration old = new org.bukkit.configuration.MemoryConfiguration();
+        for (String key : config.getKeys(true))
+            old.set(key, config.get(key));
 
-        config.addDefault("admin-ai.providers.ollama.enabled", true);
-        config.addDefault("admin-ai.providers.ollama.protocol", "ollama-native");
-        config.addDefault("admin-ai.providers.ollama.endpoint", "http://localhost:4000/api/chat");
-        config.addDefault("admin-ai.providers.ollama.model", "qwen2.5-coder:latest");
-        config.addDefault("admin-ai.providers.ollama.api-key", "ollama");
-        config.addDefault("admin-ai.providers.ollama.timeout-seconds", 90);
+        // Clear everything
+        for (String key : config.getKeys(false))
+            config.set(key, null);
 
-        // Dedicated approval provider (optional — falls back to regular providers if none enabled)
-        config.addDefault("admin-ai.approval-providers.ollama.enabled", true);
-        config.addDefault("admin-ai.approval-providers.ollama.protocol", "ollama-native");
-        config.addDefault("admin-ai.approval-providers.ollama.endpoint", "http://localhost:4000/api/chat");
-        config.addDefault("admin-ai.approval-providers.ollama.model", "qwen2.5-coder:latest");
-        config.addDefault("admin-ai.approval-providers.ollama.api-key", "ollama");
-        config.addDefault("admin-ai.approval-providers.ollama.timeout-seconds", 90);
+        // Repopulate with only recognized keys
+        config.set("admin-ai.enabled", old.getBoolean("admin-ai.enabled", false));
+        config.set("admin-ai.interactive", old.getBoolean("admin-ai.interactive", true));
+        config.set("admin-ai.max-iterations", old.getInt("admin-ai.max-iterations", 12));
+        config.set("admin-ai.max-command-seconds", old.getInt("admin-ai.max-command-seconds", 300));
+        config.set("admin-ai.max-file-bytes", old.getInt("admin-ai.max-file-bytes", 65536));
+        config.set("admin-ai.log-tail-lines", old.getInt("admin-ai.log-tail-lines", 200));
+        config.set("admin-ai.approval-mode", old.getString("admin-ai.approval-mode", "human"));
+        config.set("admin-ai.approval-timeout-minutes", old.getInt("admin-ai.approval-timeout-minutes", 5));
+        config.set("admin-ai.provider-order", old.getList("admin-ai.provider-order", List.of("ollama")));
 
-        File dataFolder = plugin.getDataFolder().getAbsoluteFile();
-        config.addDefault("admin-ai.actions.log-files", List.of("logs/latest.log"));
-        config.addDefault("admin-ai.actions.allowed-command-prefixes", List.of(
+        // Dynamic sections: providers
+        ConfigurationSection providers = old.getConfigurationSection("admin-ai.providers");
+        if (providers != null)
+            config.set("admin-ai.providers", providers);
+        else
+            installDefaultOllama(config, "admin-ai.providers.ollama");
+
+        // Dynamic sections: approval-providers
+        ConfigurationSection approvalProviders = old.getConfigurationSection("admin-ai.approval-providers");
+        if (approvalProviders != null)
+            config.set("admin-ai.approval-providers", approvalProviders);
+        else
+            installDefaultOllama(config, "admin-ai.approval-providers.ollama");
+
+        config.set("admin-ai.actions.log-files", old.getList("admin-ai.actions.log-files", List.of("logs/latest.log")));
+        config.set("admin-ai.actions.allowed-command-prefixes", old.getList("admin-ai.actions.allowed-command-prefixes", List.of(
                 "git status",
                 "git diff",
                 "git add",
@@ -67,18 +76,23 @@ class AdminAiConfig
                 "mvn -B --no-transfer-progress package",
                 "mvn -B --no-transfer-progress clean package",
                 "mvn -B --no-transfer-progress clean install"
-        ));
-        config.addDefault("admin-ai.actions.denied-command-contains", List.of(
+        )));
+        config.set("admin-ai.actions.denied-command-contains", old.getList("admin-ai.actions.denied-command-contains", List.of(
                 " rm ", " rm -", " reset --hard", " checkout --", " clean -fd", " clean -fx", " rebase ", " push --force",
                 " --force", " --amend", " chmod ", " chown "
-        ));
+        )));
 
-        // Remove deprecated path settings
-        config.set("admin-ai.actions.working-directory", null);
-        config.set("admin-ai.actions.source-roots", null);
-
-        config.options().copyDefaults(true);
         plugin.getDataFolder().mkdirs();
+    }
+
+    private void installDefaultOllama(ConfigurationSection config, String path)
+    {
+        config.set(path + ".enabled", true);
+        config.set(path + ".protocol", "ollama-native");
+        config.set(path + ".endpoint", "http://localhost:4000/api/chat");
+        config.set(path + ".model", "qwen2.5-coder:latest");
+        config.set(path + ".api-key", "ollama");
+        config.set(path + ".timeout-seconds", 90);
     }
 
     File getRootFolder()
