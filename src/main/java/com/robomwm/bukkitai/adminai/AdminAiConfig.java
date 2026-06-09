@@ -15,7 +15,9 @@ class AdminAiConfig
     AdminAiConfig(BukkitAI plugin)
     {
         this.plugin = plugin;
+        plugin.reloadConfig();
         installDefaults();
+        plugin.saveConfig();
     }
 
     void reload()
@@ -70,9 +72,13 @@ class AdminAiConfig
                 " rm ", " rm -", " reset --hard", " checkout --", " clean -fd", " clean -fx", " rebase ", " push --force",
                 " --force", " --amend", " chmod ", " chown "
         ));
+
+        // Remove deprecated path settings
+        config.set("admin-ai.actions.working-directory", null);
+        config.set("admin-ai.actions.source-roots", null);
+
         config.options().copyDefaults(true);
         plugin.getDataFolder().mkdirs();
-        plugin.saveConfig();
     }
 
     File getRootFolder()
