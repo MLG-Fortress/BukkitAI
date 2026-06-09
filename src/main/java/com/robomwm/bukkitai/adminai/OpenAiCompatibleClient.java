@@ -45,8 +45,6 @@ class OpenAiCompatibleClient
                 requestBody.addProperty("output_kind", "delta");
                 requestBody.add("chat_template_kwargs", gson.toJsonTree(java.util.Map.of("enable_thinking", false)));
             }
-            else
-                requestBody.addProperty("temperature", 0.1);
 
             // Apply custom sampling overrides
             for (java.util.Map.Entry<String, Object> entry : provider.sampling().entrySet())
