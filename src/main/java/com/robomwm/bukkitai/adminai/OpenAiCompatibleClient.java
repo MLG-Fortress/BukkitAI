@@ -66,7 +66,7 @@ class OpenAiCompatibleClient
 
         String jsonRequest = gson.toJson(requestBody);
         logger.info("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
-        logger.info("DEBUG: Request body (first line): " + jsonRequest.split("\n")[0]);
+        logger.info("DEBUG: Request body (snippet): " + jsonRequest.substring(0, Math.min(jsonRequest.length(), 200)));
 
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(provider.timeoutSeconds()))
