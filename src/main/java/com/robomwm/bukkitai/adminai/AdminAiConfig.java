@@ -82,7 +82,7 @@ class AdminAiConfig
         config.set("admin-ai.max-command-seconds", old.getInt("admin-ai.max-command-seconds", 300));
         config.set("admin-ai.max-file-bytes", old.getInt("admin-ai.max-file-bytes", 65536));
         config.set("admin-ai.log-tail-lines", old.getInt("admin-ai.log-tail-lines", 200));
-        config.set("admin-ai.approval-mode", old.getString("admin-ai.approval-mode", "human"));
+        config.set("admin-ai.approval-mode", old.getString("admin-ai.approval-mode", "ai"));
         config.set("admin-ai.approval-timeout-minutes", old.getInt("admin-ai.approval-timeout-minutes", 5));
         config.set("admin-ai.provider-order", old.getList("admin-ai.provider-order", List.of("ollama", "arliai")));
 

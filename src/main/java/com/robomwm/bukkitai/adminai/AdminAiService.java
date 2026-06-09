@@ -493,12 +493,20 @@ class AdminAiService implements Listener
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         approvalFuture.set(future);
         plugin.getServer().getScheduler().runTask(plugin, () -> {
-            plugin.getServer().broadcast(ChatColor.GOLD + "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] Pending Action: " + actionName, "mlg.admin");
-            if ("write_file".equals(actionName))
+            String prefix = "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] ";
+            plugin.getServer().broadcast(ChatColor.GOLD + prefix + "Pending Action: " + actionName, "mlg.admin");
+            plugin.getLogger().info(prefix + "Pending Action: " + actionName);
+
+            if ("write_file".equals(actionName)) {
                 plugin.getServer().broadcast(ChatColor.GRAY + "Path: " + action.path, "mlg.admin");
-            if ("run_command".equals(actionName))
+                plugin.getLogger().info("Path: " + action.path);
+            }
+            if ("run_command".equals(actionName)) {
                 plugin.getServer().broadcast(ChatColor.GRAY + "Command: " + action.command, "mlg.admin");
+                plugin.getLogger().info("Command: " + action.command);
+            }
             plugin.getServer().broadcast(ChatColor.YELLOW + "Use /adminai approve or /adminai deny", "mlg.admin");
+            plugin.getLogger().info("Use /adminai approve or /adminai deny");
         });
 
         try
