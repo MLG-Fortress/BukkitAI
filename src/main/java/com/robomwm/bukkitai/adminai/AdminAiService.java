@@ -323,12 +323,12 @@ class AdminAiService implements Listener
     private boolean isCommandAllowed(String command)
     {
         String padded = " " + command.toLowerCase(Locale.ROOT) + " ";
-        for (String denied : config.getStringList("admin-ai.actions|denied-command-contains"))
+        for (String denied : config.getStringList("admin-ai.actions.denied-command-contains"))
             if (padded.contains(denied.toLowerCase(Locale.ROOT)))
                 return false;
 
         List<String> commandTokens = CommandLine.split(command);
-        for (String prefix : config.getStringList("admin-ai.actions|allowed-command-prefixes"))
+        for (String prefix : config.getStringList("admin-ai.actions.allowed-command-prefixes"))
         {
             List<String> prefixTokens = CommandLine.split(prefix);
             if (commandTokens.size() < prefixTokens.size())
@@ -381,9 +381,13 @@ class AdminAiService implements Listener
         if (logOnly)
         {
             List<String> logs = config.getStringList("admin-ai.actions.log-files");
+            Path rootPath = config.getRootFolder().toPath();
             for (String log : logs)
             {
-                Path allowed = Path.of(log).toAbsolutePath().normalize();
+                Path allowed = Path.of(log);
+                if (!allowed.isAbsolute())
+                    allowed = rootPath.resolve(allowed);
+                allowed = allowed.toAbsolutePath().normalize();
                 if (resolved.equals(allowed))
                     return resolved;
             }
@@ -442,7 +446,7 @@ class AdminAiService implements Listener
     private String buildInitialPrompt(String userPrompt)
     {
         return "Task requested at " + Instant.now() + " UTC:\n" + userPrompt + "\n\nConfigured log files:\n"
-                + String.join("\n", config.getStringList("admin-ai.actions|log-files"));
+                + String.join("\n", config.getStringList("admin-ai.actions.log-files"));
     }
 
     private String systemPrompt()
@@ -456,10 +460,10 @@ class AdminAiService implements Listener
                 
                 You must respond with exactly one JSON object and no prose.
                 Valid actions:
-                {"action":"read_log","path":"/absolute/log/path"}
-                {"action":"read_file","path":"relative/or/absolute/path"}
-                {"action":"write_file","path":"relative/or/absolute/path","content":"full new file content"}
-                {"action":"append_file","path":"relative/or/absolute/path","content":"content to append"}
+                {"action":"read_log","path":"path/to/log"}
+                {"action":"read_file","path":"path/to/file"}
+                {"action":"write_file","path":"path/to/file","content":"full new file content"}
+                {"action":"append_file","path":"path/to/file","content":"content to append"}
                 {"action":"run_command","command":"allowed command"}
                 {"action":"finish","message":"summary"}
                 Safety & Tools:
