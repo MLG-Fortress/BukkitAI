@@ -12,13 +12,20 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
+import java.util.logging.Logger;
 
 class OpenAiCompatibleClient
 {
+    private final Logger logger;
     private final Gson gson = new Gson();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
+
+    OpenAiCompatibleClient(Logger logger)
+    {
+        this.logger = logger;
+    }
 
     String complete(AiProvider provider, List<AiMessage> messages) throws IOException, InterruptedException
     {
@@ -56,8 +63,8 @@ class OpenAiCompatibleClient
             throw new IOException("Provider " + provider.name() + " has no endpoint configured.");
 
         String jsonRequest = gson.toJson(requestBody);
-        System.out.println("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
-        System.out.println("DEBUG: Request body: " + jsonRequest);
+        logger.info("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
+        logger.info("DEBUG: Request body: " + jsonRequest);
 
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(provider.timeoutSeconds()))
@@ -71,12 +78,12 @@ class OpenAiCompatibleClient
         {
             HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
-            System.out.println("DEBUG: Response body: " + responseBody);
+            logger.info("DEBUG: Response body: " + responseBody);
 
             if (response.statusCode() < 200 || response.statusCode() >= 300)
             {
                 String errorMessage = provider.name() + " returned HTTP " + response.statusCode() + ": " + responseBody;
-                System.err.println("DEBUG: " + errorMessage); // Log to stderr for server console visibility
+                logger.warning("DEBUG: " + errorMessage);
                 throw new IOException(errorMessage);
             }
 
@@ -84,8 +91,6 @@ class OpenAiCompatibleClient
                 throw new IOException(provider.name() + " returned empty response.");
             
             JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
-            // ... (rest of parsing logic)
-            // Need to reconstruct the rest of the file logic here exactly.
             if (json.has("choices"))
             {
                 JsonArray choices = json.getAsJsonArray("choices");
@@ -108,8 +113,7 @@ class OpenAiCompatibleClient
         {
             String message = e.getMessage();
             if (message == null) message = e.getClass().getName();
-            System.err.println("DEBUG: Exception during HTTP request: " + message);
-            e.printStackTrace();
+            logger.warning("DEBUG: Exception during HTTP request: " + message);
             throw e;
         }
     }

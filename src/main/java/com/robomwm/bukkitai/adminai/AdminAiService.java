@@ -30,7 +30,7 @@ class AdminAiService implements Listener
 {
     private final BukkitAI plugin;
     private final AdminAiConfig config;
-    private final OpenAiCompatibleClient client = new OpenAiCompatibleClient();
+    private final OpenAiCompatibleClient client;
     private final Gson gson = new Gson();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final AtomicReference<Process> currentProcess = new AtomicReference<>();
@@ -43,6 +43,7 @@ class AdminAiService implements Listener
     {
         this.plugin = plugin;
         this.config = new AdminAiConfig(plugin);
+        this.client = new OpenAiCompatibleClient(plugin.getLogger());
         this.approvalClient = new ApprovalAiClient(client, config, plugin.getLogger());
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
         scheduleMaintenanceCheck();
