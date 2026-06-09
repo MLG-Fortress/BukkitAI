@@ -60,13 +60,6 @@ class AdminAiConfig
             installDefaultArliAI(config, "admin-ai.providers.arliai");
         }
 
-        // Dynamic sections: approval-providers
-        ConfigurationSection approvalProviders = old.getConfigurationSection("admin-ai.approval-providers");
-        if (approvalProviders != null)
-            config.set("admin-ai.approval-providers", approvalProviders);
-        else
-            installDefaultOllama(config, "admin-ai.approval-providers.ollama");
-
         config.set("admin-ai.actions.log-files", old.getList("admin-ai.actions.log-files", List.of("logs/latest.log")));
         config.set("admin-ai.actions.allowed-command-prefixes", old.getList("admin-ai.actions.allowed-command-prefixes", List.of(
                 "git status",
@@ -179,38 +172,6 @@ class AdminAiConfig
     List<AiProvider> getProviders()
     {
         return loadProviders("admin-ai.providers", "admin-ai.provider-order");
-    }
-
-    List<AiProvider> getApprovalProviders()
-    {
-        // Scan all sections under approval-providers for enabled ones
-        List<AiProvider> providers = new ArrayList<>();
-        ConfigurationSection parent = plugin.getConfig().getConfigurationSection("admin-ai.approval-providers");
-        if (parent == null)
-            return providers;
-        for (String name : parent.getKeys(false))
-        {
-            ConfigurationSection section = parent.getConfigurationSection(name);
-            if (section == null || !section.getBoolean("enabled"))
-                continue;
-            
-            java.util.Map<String, Object> sampling = new java.util.HashMap<>();
-            ConfigurationSection samplingSection = section.getConfigurationSection("sampling");
-            if (samplingSection != null)
-                for (String key : samplingSection.getKeys(false))
-                    sampling.put(key, samplingSection.get(key));
-
-            providers.add(new AiProvider(
-                    name,
-                    section.getString("protocol", "ollama-native"),
-                    section.getString("endpoint", ""),
-                    section.getString("model", ""),
-                    section.getString("api-key", ""),
-                    section.getInt("timeout-seconds", 30),
-                    sampling
-            ));
-        }
-        return providers;
     }
 
     private List<AiProvider> loadProviders(String sectionPath, String orderPath)

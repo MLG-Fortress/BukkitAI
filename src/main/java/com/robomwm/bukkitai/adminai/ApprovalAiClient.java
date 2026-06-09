@@ -47,9 +47,7 @@ class ApprovalAiClient
                 new AiMessage("user", prompt)
         );
 
-        List<AiProvider> providers = config.getApprovalProviders();
-        if (providers.isEmpty())
-            providers = config.getProviders();
+        List<AiProvider> providers = config.getProviders();
 
         IOException lastError = null;
         for (AiProvider provider : providers)
