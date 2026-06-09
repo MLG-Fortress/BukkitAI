@@ -90,7 +90,7 @@ class AdminAiConfig
         config.set(path + ".enabled", true);
         config.set(path + ".protocol", "ollama-native");
         config.set(path + ".endpoint", "http://localhost:4000/api/chat");
-        config.set(path + ".model", "qwen2.5-coder:latest");
+        config.set(path + ".model", "llama3.2:3b");
         config.set(path + ".api-key", "ollama");
         config.set(path + ".timeout-seconds", 90);
     }
