@@ -1,6 +1,7 @@
 package com.robomwm.bukkitai.adminai;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -18,6 +19,7 @@ class OpenAiCompatibleClient
 {
     private final Logger logger;
     private final Gson gson = new Gson();
+    private final Gson prettyGson = new GsonBuilder().setPrettyPrinting().create();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -64,7 +66,7 @@ class OpenAiCompatibleClient
 
         String jsonRequest = gson.toJson(requestBody);
         logger.info("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
-        logger.info("DEBUG: Request body: " + jsonRequest);
+        logger.info("DEBUG: Request body:\n" + prettyGson.toJson(requestBody));
 
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(provider.timeoutSeconds()))
@@ -78,7 +80,7 @@ class OpenAiCompatibleClient
         {
             HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
-            logger.info("DEBUG: Response body: " + responseBody);
+            logger.info("DEBUG: Response body:\n" + (responseBody != null && !responseBody.isBlank() ? prettyGson.toJson(JsonParser.parseString(responseBody)) : responseBody));
 
             if (response.statusCode() < 200 || response.statusCode() >= 300)
             {
