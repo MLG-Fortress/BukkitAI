@@ -334,7 +334,7 @@ class AdminAiService implements Listener
         }
         String output = Files.readString(outputFile, StandardCharsets.UTF_8);
         Files.deleteIfExists(outputFile);
-        return "exit=" + process.exitValue() + "\n" + truncate(output, 16000);
+        return "exit=" + process.exitValue() + "\n" + truncate(output, config.getInt("admin-ai.max-context-tokens"));
     }
 
     private boolean isCommandAllowed(String command)

@@ -81,6 +81,7 @@ class AdminAiConfig
         config.set("admin-ai.max-iterations", old.getInt("admin-ai.max-iterations", 12));
         config.set("admin-ai.max-command-seconds", old.getInt("admin-ai.max-command-seconds", 300));
         config.set("admin-ai.max-file-bytes", old.getInt("admin-ai.max-file-bytes", 65536));
+        config.set("admin-ai.max-context-tokens", old.getInt("admin-ai.max-context-tokens", 12000));
         config.set("admin-ai.log-tail-lines", old.getInt("admin-ai.log-tail-lines", 200));
         config.set("admin-ai.approval-mode", old.getString("admin-ai.approval-mode", "ai"));
         config.set("admin-ai.approval-timeout-minutes", old.getInt("admin-ai.approval-timeout-minutes", 5));
