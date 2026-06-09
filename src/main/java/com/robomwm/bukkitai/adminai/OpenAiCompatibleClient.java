@@ -55,12 +55,14 @@ class OpenAiCompatibleClient
         if (endpoint == null || endpoint.isBlank())
             throw new IOException("Provider " + provider.name() + " has no endpoint configured.");
 
+        String jsonRequest = gson.toJson(requestBody);
         System.out.println("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
+        System.out.println("DEBUG: Request body: " + jsonRequest);
 
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(provider.timeoutSeconds()))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(requestBody)));
+                .POST(HttpRequest.BodyPublishers.ofString(jsonRequest));
 
         if (!provider.apiKey().isBlank())
             requestBuilder.header("Authorization", "Bearer " + provider.apiKey());
@@ -68,15 +70,16 @@ class OpenAiCompatibleClient
         try
         {
             HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            String responseBody = response.body();
+            System.out.println("DEBUG: Response body: " + responseBody);
+
             if (response.statusCode() < 200 || response.statusCode() >= 300)
             {
-                String body = response.body();
-                String errorMessage = provider.name() + " returned HTTP " + response.statusCode() + ": " + body;
+                String errorMessage = provider.name() + " returned HTTP " + response.statusCode() + ": " + responseBody;
                 System.err.println("DEBUG: " + errorMessage); // Log to stderr for server console visibility
                 throw new IOException(errorMessage);
             }
 
-            String responseBody = response.body();
             if (responseBody == null || responseBody.isBlank())
                 throw new IOException(provider.name() + " returned empty response.");
             
