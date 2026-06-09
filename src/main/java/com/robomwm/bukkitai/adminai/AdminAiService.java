@@ -201,6 +201,7 @@ class AdminAiService implements Listener
                 messages.add(new AiMessage("user", result));
                 if ("finish".equalsIgnoreCase(action.action))
                 {
+                    logAiNotes(action.message);
                     send(sender, ChatColor.GREEN + "Admin AI done: " + nullToEmpty(action.message));
                     return;
                 }
@@ -220,6 +221,33 @@ class AdminAiService implements Listener
         finally
         {
             currentProcess.set(null);
+        }
+    }
+
+    private void logAiNotes(String message) {
+        if (message == null || message.isBlank())
+            return;
+        try {
+            java.io.File file = new java.io.File(plugin.getDataFolder(), "ai-notes.md");
+            if (!file.exists()) {
+                plugin.getDataFolder().mkdirs();
+                file.createNewFile();
+            }
+            
+            String[] parts = message.split("PROPOSED PLAN:", 2);
+            StringBuilder formatted = new StringBuilder();
+            formatted.append("### ").append(Instant.now()).append(" UTC\n");
+            formatted.append(parts[0].trim()).append("\n");
+            if (parts.length > 1) {
+                formatted.append("\n**Proposed Actions:**\n");
+                formatted.append(parts[1].trim()).append("\n");
+            }
+            formatted.append("---\n\n");
+            
+            Files.writeString(file.toPath(), formatted.toString(),
+                    StandardCharsets.UTF_8, StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            plugin.getLogger().warning("Could not append to ai-notes.md: " + e.getMessage());
         }
     }
 
@@ -472,9 +500,9 @@ class AdminAiService implements Listener
                 You are an autonomous Minecraft server admin maintenance agent running inside a Bukkit plugin.
                 The server is experimental, testing lots of plugins (minigames, admin tools, etc.).
                 Your job: inspect logs/source, help maintain the server, seek out new forks of plugins if existing ones are unmaintained.
-                If a task is too big and there are no suitable forks, propose a plan and save it to a file.
-                IMPORTANT: Keep notes! Use `append_file` to write your notes, suggestions, or proposed plans to `~/a/ai-notes.md` so the admin can review them later and implement fixes themselves. Act as a semi-self-learning assistant.
-                
+                If a task is too big and there are no suitable forks, propose a plan in your `finish` action's message.
+                Use the separator "PROPOSED PLAN:" if you have specific actions to recommend after your summary notes.
+
                 You must respond with exactly one JSON object and no prose.
                 Valid actions:
                 {"action":"read_log","path":"path/to/log"}
@@ -482,9 +510,9 @@ class AdminAiService implements Listener
                 {"action":"write_file","path":"path/to/file","content":"full new file content"}
                 {"action":"append_file","path":"path/to/file","content":"content to append"}
                 {"action":"run_command","command":"allowed command"}
-                {"action":"finish","message":"summary"}
+                {"action":"finish","message":"summary of work done, followed by notes and PROPOSED PLAN: action items if needed"}
                 Safety & Tools:
-                - Use `~/a/updatething.sh` to pull and build updates for plugins instead of manual git/maven commands when a general update is requested.
+                - Use `updatething.sh` to pull and build updates for plugins instead of manual git/maven commands when a general update is requested.
                 - Never request destructive commands.
                 - Use read_file before write_file.
                 - Prefer git diff/status before commit.
