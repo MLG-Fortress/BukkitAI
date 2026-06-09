@@ -66,7 +66,7 @@ class OpenAiCompatibleClient
 
         String jsonRequest = gson.toJson(requestBody);
         logger.info("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
-        logger.info("DEBUG: Request body:\n" + prettyGson.toJson(requestBody));
+        logger.info("DEBUG: Request body (first line): " + jsonRequest.split("\n")[0]);
 
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(provider.timeoutSeconds()))
@@ -80,7 +80,18 @@ class OpenAiCompatibleClient
         {
             HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
-            logger.info("DEBUG: Response body:\n" + (responseBody != null && !responseBody.isBlank() ? prettyGson.toJson(JsonParser.parseString(responseBody)) : responseBody));
+            String responseContent = responseBody;
+            try {
+                JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
+                if (json.has("response"))
+                    responseContent = json.get("response").getAsString();
+                else if (json.has("choices") && json.getAsJsonArray("choices").size() > 0) {
+                    JsonObject message = json.getAsJsonArray("choices").get(0).getAsJsonObject().getAsJsonObject("message");
+                    if (message.has("content"))
+                        responseContent = message.get("content").getAsString();
+                }
+            } catch (Exception ignored) {}
+            logger.info("DEBUG: Response content: " + responseContent);
 
             if (response.statusCode() < 200 || response.statusCode() >= 300)
             {
