@@ -535,7 +535,7 @@ class AdminAiService implements Listener
                 {"action":"run_command","command":"allowed command"}
                 {"action":"finish","message":"summary of work done, followed by notes and PROPOSED PLAN: action items if needed"}
                 Safety & Tools:
-                - Use `updatething.sh` to pull and build updates for plugins instead of manual git/maven commands when a general update is requested.
+                - Use `/update` to pull and build updates for plugins instead of manual git/maven commands when a general update is requested.
                 - Never request destructive commands.
                 - Use read_file before write_file.
                 - Prefer git diff/status before commit.
