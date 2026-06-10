@@ -81,7 +81,7 @@ class AdminAiService implements Listener
         }
         if (uniqueExceptions.isEmpty()) return;
 
-        String prompt = "The server encountered the following exceptions recently. Please investigate the logs (e.g. plugins/ErrorSink/errors.log or logs/latest.log) for stacktraces and suggest/apply fixes or propose a plan:\n"
+        String prompt = "The server encountered the following exceptions recently. Investigate logs for stacktraces and suggest/apply fixes or propose a plan:\n"
                 + String.join("\n", uniqueExceptions);
         run(plugin.getServer().getConsoleSender(), prompt, true);
     }
