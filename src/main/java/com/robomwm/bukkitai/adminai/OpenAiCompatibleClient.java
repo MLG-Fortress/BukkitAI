@@ -65,10 +65,7 @@ class OpenAiCompatibleClient
             throw new IOException("Provider " + provider.name() + " has no endpoint configured.");
 
         String jsonRequest = gson.toJson(requestBody);
-        String latestMessage = messages.get(messages.size() - 1).content();
-        String snippet = latestMessage.substring(0, Math.min(latestMessage.length(), 200));
-        logger.info("DEBUG: Sending request to " + endpoint + " for provider " + provider.name() + " | Latest message snippet: " + snippet);
-        logger.info("DEBUG: Request body (truncated): " + jsonRequest.substring(0, Math.min(jsonRequest.length(), 50)));
+        logger.info("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
 
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(provider.timeoutSeconds()))
