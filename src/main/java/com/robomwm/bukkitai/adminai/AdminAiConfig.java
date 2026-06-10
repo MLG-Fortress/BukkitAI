@@ -85,9 +85,6 @@ class AdminAiConfig
         config.set("admin-ai.log-tail-lines", old.getInt("admin-ai.log-tail-lines", 200));
         config.set("admin-ai.approval-mode", old.getString("admin-ai.approval-mode", "ai"));
         config.set("admin-ai.approval-timeout-minutes", old.getInt("admin-ai.approval-timeout-minutes", 5));
-        config.set("admin-ai.always-approve-approved-actions", old.getBoolean("admin-ai.always-approve-approved-actions", true));
-        config.set("admin-ai.approval-log-file", old.getString("admin-ai.approval-log-file", "logs/admin-ai-approvals.log"));
-        config.set("admin-ai.approved-actions", old.getList("admin-ai.approved-actions", List.of()));
         config.set("admin-ai.provider-order", old.getList("admin-ai.provider-order", List.of("ollama", "arliai")));
 
         // Dynamic sections: providers
@@ -113,6 +110,7 @@ class AdminAiConfig
                 "mvn -B --no-transfer-progress clean package",
                 "mvn -B --no-transfer-progress clean install"
         )));
+        config.set("admin-ai.actions.allowed-file-paths", old.getList("admin-ai.actions.allowed-file-paths", List.of("ai-notes.md")));
         config.set("admin-ai.actions.denied-command-contains", old.getList("admin-ai.actions.denied-command-contains", List.of(
                 " rm ", " rm -", " reset --hard", " checkout --", " clean -fd", " clean -fx", " rebase ", " push --force",
                 " --force", " --amend", " chmod ", " chown "
@@ -209,28 +207,34 @@ class AdminAiConfig
         return plugin.getConfig().getInt("admin-ai.approval-timeout-minutes", 5);
     }
 
-    boolean alwaysApproveApprovedActions()
+    List<String> getAllowedCommandPrefixes()
     {
-        return plugin.getConfig().getBoolean("admin-ai.always-approve-approved-actions", true);
+        return plugin.getConfig().getStringList("admin-ai.actions.allowed-command-prefixes");
     }
 
-    String getApprovalLogFile()
+    void addAllowedCommandPrefix(String prefix)
     {
-        return plugin.getConfig().getString("admin-ai.approval-log-file", "logs/admin-ai-approvals.log");
-    }
-
-    List<String> getApprovedActions()
-    {
-        return plugin.getConfig().getStringList("admin-ai.approved-actions");
-    }
-
-    void addApprovedAction(String fingerprint)
-    {
-        List<String> approved = new ArrayList<>(plugin.getConfig().getStringList("admin-ai.approved-actions"));
-        if (!approved.contains(fingerprint))
+        List<String> list = new ArrayList<>(getAllowedCommandPrefixes());
+        if (!list.contains(prefix))
         {
-            approved.add(fingerprint);
-            plugin.getConfig().set("admin-ai.approved-actions", approved);
+            list.add(prefix);
+            plugin.getConfig().set("admin-ai.actions.allowed-command-prefixes", list);
+            plugin.saveConfig();
+        }
+    }
+
+    List<String> getAllowedFilePaths()
+    {
+        return plugin.getConfig().getStringList("admin-ai.actions.allowed-file-paths");
+    }
+
+    void addAllowedFilePath(String path)
+    {
+        List<String> list = new ArrayList<>(getAllowedFilePaths());
+        if (!list.contains(path))
+        {
+            list.add(path);
+            plugin.getConfig().set("admin-ai.actions.allowed-file-paths", list);
             plugin.saveConfig();
         }
     }

@@ -280,11 +280,17 @@ class AdminAiService implements Listener
         {
             String approvalMode = config.getApprovalMode();
             boolean needsApproval = config.isInteractive() || proactive;
-            String approvalFingerprint = approvalFingerprint(actionName, action, proactive);
-            if (config.alwaysApproveApprovedActions() && config.getApprovedActions().contains(approvalFingerprint))
+            
+            boolean autoApproved = false;
+            if ("run_command".equals(actionName) && isCommandAllowed(action.command))
+                autoApproved = true;
+            else if (("write_file".equals(actionName) || "append_file".equals(actionName)) && config.getAllowedFilePaths().contains(action.path))
+                autoApproved = true;
+
+            if (autoApproved)
             {
-                broadcastApprovalResult(actionName, action, proactive, new ApprovalAiClient.ApprovalResult(true, "Previously approved; auto-approved from config."));
-                logApproval("config", actionName, action, proactive, "Previously approved; auto-approved from config.", approvalFingerprint);
+                broadcastApprovalResult(actionName, action, proactive, new ApprovalAiClient.ApprovalResult(true, "Previously approved or allowed in config."));
+                logApproval("config", actionName, action, proactive, "Previously approved or allowed in config.", "");
             }
             else
             {
@@ -296,7 +302,7 @@ class AdminAiService implements Listener
                 broadcastApprovalResult(actionName, action, proactive, result);
                 if (!result.approved())
                     return "RESULT error\nAction denied by approval AI: " + result.reason();
-                recordApproval("ai", actionName, action, proactive, result.reason(), approvalFingerprint);
+                recordApproval("ai", actionName, action, proactive, result.reason());
             }
             else if ("ai-fallback-human".equals(approvalMode))
             {
@@ -307,14 +313,14 @@ class AdminAiService implements Listener
                     String humanResult = requestHumanApproval(actionName, action, proactive);
                     if (humanResult != null)
                         return humanResult;
-                    recordApproval("human", actionName, action, proactive, "Fallback approval after AI unavailable.", approvalFingerprint);
+                    recordApproval("human", actionName, action, proactive, "Fallback approval after AI unavailable.");
                 }
                 else
                 {
                     broadcastApprovalResult(actionName, action, proactive, result);
                     if (!result.approved())
                         return "RESULT error\nAction denied by approval AI: " + result.reason();
-                    recordApproval("ai", actionName, action, proactive, result.reason(), approvalFingerprint);
+                    recordApproval("ai", actionName, action, proactive, result.reason());
                 }
             }
             else if (needsApproval) // "human" mode
@@ -322,7 +328,7 @@ class AdminAiService implements Listener
                 String humanResult = requestHumanApproval(actionName, action, proactive);
                 if (humanResult != null)
                     return humanResult;
-                recordApproval("human", actionName, action, proactive, "Human approval granted.", approvalFingerprint);
+                recordApproval("human", actionName, action, proactive, "Human approval granted.");
             }
             }
         }
@@ -574,17 +580,18 @@ class AdminAiService implements Listener
         return null; // approved
     }
 
-    private void recordApproval(String approvalSource, String actionName, AiAction action, boolean proactive, String reason, String fingerprint)
+    private void recordApproval(String approvalSource, String actionName, AiAction action, boolean proactive, String reason)
     {
-        if (!config.alwaysApproveApprovedActions())
-            return;
-        config.addApprovedAction(fingerprint);
-        logApproval(approvalSource, actionName, action, proactive, reason, fingerprint);
+        if ("run_command".equals(actionName))
+            config.addAllowedCommandPrefix(action.command);
+        else if ("write_file".equals(actionName) || "append_file".equals(actionName))
+            config.addAllowedFilePath(action.path);
+        logApproval(approvalSource, actionName, action, proactive, reason, "");
     }
 
     private void logApproval(String approvalSource, String actionName, AiAction action, boolean proactive, String reason, String fingerprint)
     {
-        Path logFile = config.getRootFolder().toPath().resolve(config.getApprovalLogFile()).toAbsolutePath().normalize();
+        Path logFile = plugin.getDataFolder().toPath().resolve("admin-ai-approvals.log");
         try
         {
             Files.createDirectories(logFile.getParent());
@@ -595,20 +602,13 @@ class AdminAiService implements Listener
                 default -> "";
             };
             String line = Instant.now() + " source=" + approvalSource + " proactive=" + proactive + " action=" + actionName
-                    + details + " fingerprint=" + fingerprint + " reason=" + reason.replace('\n', ' ');
+                    + details + (fingerprint.isEmpty() ? "" : " fingerprint=" + fingerprint) + " reason=" + reason.replace('\n', ' ');
             Files.writeString(logFile, line + System.lineSeparator(), StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         }
         catch (IOException e)
         {
             plugin.getLogger().warning("Could not write approval log: " + e.getMessage());
         }
-    }
-
-    private String approvalFingerprint(String actionName, AiAction action, boolean proactive)
-    {
-        String payload = actionName + "|" + proactive + "|" + nullToEmpty(action.path) + "|" + nullToEmpty(action.command) + "|"
-                + sha256(nullToEmpty(action.content));
-        return sha256(payload);
     }
 
     private String sha256(String input)
