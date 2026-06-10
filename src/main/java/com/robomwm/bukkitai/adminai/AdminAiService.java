@@ -191,6 +191,7 @@ class AdminAiService implements Listener
 
         try
         {
+            bootstrapWithInitialLogRead(messages);
             for (int i = 0; i < config.getInt("admin-ai.max-iterations"); i++)
             {
                 ensureStillEnabled();
@@ -224,6 +225,20 @@ class AdminAiService implements Listener
         {
             currentProcess.set(null);
         }
+    }
+
+    private void bootstrapWithInitialLogRead(List<AiMessage> messages) throws IOException, InterruptedException
+    {
+        List<String> logFiles = config.getStringList("admin-ai.actions.log-files");
+        if (logFiles.isEmpty())
+            return;
+
+        AiAction initialAction = new AiAction();
+        initialAction.action = "read_log";
+        initialAction.path = logFiles.get(0);
+
+        messages.add(new AiMessage("assistant", gson.toJson(initialAction)));
+        messages.add(new AiMessage("user", executeAction(initialAction, messages, true)));
     }
 
     private void logAiNotes(String message) {
