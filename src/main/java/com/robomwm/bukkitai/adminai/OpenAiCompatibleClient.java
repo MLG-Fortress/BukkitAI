@@ -80,6 +80,8 @@ class OpenAiCompatibleClient
         if (response.statusCode() < 200 || response.statusCode() >= 300)
         {
             String errorMessage = provider.name() + " returned HTTP " + response.statusCode();
+            if (response.statusCode() >= 400 && response.statusCode() < 500 && responseBody != null && !responseBody.isBlank())
+                errorMessage += ": " + responseBody;
             throw new IOException(errorMessage);
         }
 
