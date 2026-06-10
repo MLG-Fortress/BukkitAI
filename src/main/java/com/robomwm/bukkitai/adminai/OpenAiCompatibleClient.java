@@ -82,22 +82,10 @@ class OpenAiCompatibleClient
         {
             HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
-            String responseContent = responseBody;
-            try {
-                JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
-                if (json.has("response"))
-                    responseContent = json.get("response").getAsString();
-                else if (json.has("choices") && json.getAsJsonArray("choices").size() > 0) {
-                    JsonObject message = json.getAsJsonArray("choices").get(0).getAsJsonObject().getAsJsonObject("message");
-                    if (message.has("content"))
-                        responseContent = message.get("content").getAsString();
-                }
-            } catch (Exception ignored) {}
-            logger.info("DEBUG: Response content: " + responseContent);
 
             if (response.statusCode() < 200 || response.statusCode() >= 300)
             {
-                String errorMessage = provider.name() + " returned HTTP " + response.statusCode() + ": " + responseBody;
+                String errorMessage = provider.name() + " returned HTTP " + response.statusCode();
                 logger.warning("DEBUG: " + errorMessage);
                 throw new IOException(errorMessage);
             }

@@ -195,8 +195,10 @@ class AdminAiService implements Listener
             {
                 ensureStillEnabled();
                 String response = completeWithFallback(messages);
-                messages.add(new AiMessage("assistant", response));
                 AiAction action = parseAction(response);
+                if (!"finish".equalsIgnoreCase(action.action))
+                    broadcastResponse(response, proactive);
+                messages.add(new AiMessage("assistant", response));
                 String result = executeAction(action, messages, proactive);
                 messages.add(new AiMessage("user", result));
                 if ("finish".equalsIgnoreCase(action.action))
@@ -624,6 +626,15 @@ class AdminAiService implements Listener
         {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
+    }
+
+    private void broadcastResponse(String response, boolean proactive)
+    {
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            String prefix = "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] ";
+            plugin.getServer().broadcast(ChatColor.GOLD + prefix + "Response: " + ChatColor.GRAY + response, "mlg.admin");
+            plugin.getLogger().info(prefix + "Response: " + response);
+        });
     }
 
     private void broadcastApprovalResult(String actionName, AiAction action, boolean proactive, ApprovalAiClient.ApprovalResult result)
