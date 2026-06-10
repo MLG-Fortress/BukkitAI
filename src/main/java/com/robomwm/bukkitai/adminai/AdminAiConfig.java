@@ -76,7 +76,7 @@ class AdminAiConfig
             config.set(key, null);
 
         // Repopulate with only recognized keys
-        config.set("admin-ai.enabled", old.getBoolean("admin-ai.enabled", false));
+        config.set("admin-ai.enabled", old.getBoolean("admin-ai.enabled", true));
         config.set("admin-ai.interactive", old.getBoolean("admin-ai.interactive", true));
         config.set("admin-ai.max-iterations", old.getInt("admin-ai.max-iterations", 12));
         config.set("admin-ai.max-command-seconds", old.getInt("admin-ai.max-command-seconds", 300));
@@ -128,7 +128,7 @@ class AdminAiConfig
         config.set(path + ".endpoint", "http://localhost:4000/api/chat");
         config.set(path + ".model", "llama3.2:3b");
         config.set(path + ".api-key", "ollama");
-        config.set(path + ".timeout-seconds", 90);
+        config.set(path + ".timeout-seconds", 600);
     }
 
     private void installDefaultArliAI(ConfigurationSection config, String path)
@@ -138,7 +138,7 @@ class AdminAiConfig
         config.set(path + ".endpoint", "https://api.arliai.com/v1/chat/completions");
         config.set(path + ".model", "Qwen3.5-27B-Derestricted");
         config.set(path + ".api-key", "arliai");
-        config.set(path + ".timeout-seconds", 90);
+        config.set(path + ".timeout-seconds", 600);
         config.set(path + ".sampling.temperature", 0.7);
         config.set(path + ".sampling.top_p", 0.8);
         config.set(path + ".sampling.top_k", 20);
@@ -164,7 +164,7 @@ class AdminAiConfig
 
     boolean isEnabled()
     {
-        return plugin.getConfig().getBoolean("admin-ai.enabled", false);
+        return plugin.getConfig().getBoolean("admin-ai.enabled", true);
     }
 
     void setEnabled(boolean enabled)
@@ -261,7 +261,7 @@ class AdminAiConfig
                     section.getString("endpoint", ""),
                     section.getString("model", ""),
                     secrets.getProperty(name + ".api-key", ""),
-                    section.getInt("timeout-seconds", 90),
+                    section.getInt("timeout-seconds", 600),
                     sampling
             ));
         }

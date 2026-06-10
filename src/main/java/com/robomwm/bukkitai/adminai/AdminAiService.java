@@ -57,7 +57,7 @@ class AdminAiService implements Listener
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
             if (config.isEnabled())
                 run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true);
-        }, 1200L); // 1 minute after startup
+        }, 100L); // 5 seconds after startup
 
         plugin.getServer().getScheduler().runTaskTimer(plugin, this::processQueuedExceptions, 6000L, 6000L); // Every 5 minutes
     }
