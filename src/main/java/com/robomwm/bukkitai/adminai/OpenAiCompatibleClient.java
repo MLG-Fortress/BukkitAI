@@ -65,7 +65,6 @@ class OpenAiCompatibleClient
             throw new IOException("Provider " + provider.name() + " has no endpoint configured.");
 
         String jsonRequest = gson.toJson(requestBody);
-        logger.info("DEBUG: Sending request to " + endpoint + " for provider " + provider.name());
 
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(endpoint))
                 .timeout(Duration.ofSeconds(provider.timeoutSeconds()))
@@ -81,7 +80,6 @@ class OpenAiCompatibleClient
         if (response.statusCode() < 200 || response.statusCode() >= 300)
         {
             String errorMessage = provider.name() + " returned HTTP " + response.statusCode();
-            logger.warning("DEBUG: " + errorMessage);
             throw new IOException(errorMessage);
         }
 

@@ -218,7 +218,6 @@ class AdminAiService implements Listener
         }
         catch (Exception e)
         {
-            plugin.getLogger().warning("Admin AI failed: " + e.getMessage());
             send(sender, ChatColor.RED + "Admin AI failed: " + e.getMessage());
         }
         finally
