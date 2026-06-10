@@ -75,47 +75,37 @@ class OpenAiCompatibleClient
         if (!provider.apiKey().isBlank())
             requestBuilder.header("Authorization", "Bearer " + provider.apiKey());
 
-        try
-        {
-            HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            String responseBody = response.body();
+        HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+        String responseBody = response.body();
 
-            if (response.statusCode() < 200 || response.statusCode() >= 300)
-            {
-                String errorMessage = provider.name() + " returned HTTP " + response.statusCode();
-                logger.warning("DEBUG: " + errorMessage);
-                throw new IOException(errorMessage);
-            }
-
-            if (responseBody == null || responseBody.isBlank())
-                throw new IOException(provider.name() + " returned empty response.");
-            
-            JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
-            if (json.has("choices"))
-            {
-                JsonArray choices = json.getAsJsonArray("choices");
-                if (!choices.isEmpty())
-                    return choices.get(0).getAsJsonObject().getAsJsonObject("message").get("content").getAsString();
-            }
-            if (json.has("message") && json.get("message").isJsonObject())
-                return json.getAsJsonObject("message").get("content").getAsString();
-            if (json.has("message") && json.get("message").isJsonPrimitive())
-                return json.get("message").getAsString();
-            if (json.has("content"))
-                return json.get("content").getAsString();
-            if (json.has("response"))
-                return json.get("response").getAsString();
-            if (json.has("text"))
-                return json.get("text").getAsString();
-            throw new IOException(provider.name() + " response had no chat content.");
-        }
-        catch (Exception e)
+        if (response.statusCode() < 200 || response.statusCode() >= 300)
         {
-            String message = e.getMessage();
-            if (message == null) message = e.getClass().getName();
-            logger.warning("DEBUG: Exception during HTTP request: " + message);
-            throw e;
+            String errorMessage = provider.name() + " returned HTTP " + response.statusCode();
+            logger.warning("DEBUG: " + errorMessage);
+            throw new IOException(errorMessage);
         }
+
+        if (responseBody == null || responseBody.isBlank())
+            throw new IOException(provider.name() + " returned empty response.");
+
+        JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
+        if (json.has("choices"))
+        {
+            JsonArray choices = json.getAsJsonArray("choices");
+            if (!choices.isEmpty())
+                return choices.get(0).getAsJsonObject().getAsJsonObject("message").get("content").getAsString();
+        }
+        if (json.has("message") && json.get("message").isJsonObject())
+            return json.getAsJsonObject("message").get("content").getAsString();
+        if (json.has("message") && json.get("message").isJsonPrimitive())
+            return json.get("message").getAsString();
+        if (json.has("content"))
+            return json.get("content").getAsString();
+        if (json.has("response"))
+            return json.get("response").getAsString();
+        if (json.has("text"))
+            return json.get("text").getAsString();
+        throw new IOException(provider.name() + " response had no chat content.");
     }
 
     private String truncate(String input, int max)
