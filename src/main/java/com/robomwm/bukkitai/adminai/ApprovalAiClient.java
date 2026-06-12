@@ -115,7 +115,7 @@ class ApprovalAiClient
         sb.append("**Task type:** ").append(proactive ? "PROACTIVE (automated)" : "MANUAL (admin-initiated)").append('\n');
         sb.append("**Action:** ").append(action.action).append('\n');
 
-        if ("run_command".equals(action.action))
+        if ("run_command".equals(action.action) || "bash".equals(action.action))
             sb.append("**Command:** `").append(action.command).append("`\n");
         if ("write_file".equals(action.action))
         {

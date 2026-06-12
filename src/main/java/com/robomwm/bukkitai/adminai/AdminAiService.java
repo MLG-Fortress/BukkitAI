@@ -297,7 +297,7 @@ class AdminAiService implements Listener
             boolean needsApproval = config.isInteractive() || proactive;
             
             boolean autoApproved = false;
-            if ("run_command".equals(actionName) && isCommandAllowed(action.command))
+            if (("run_command".equals(actionName) || "bash".equals(actionName)) && isCommandAllowed(action.command))
                 autoApproved = true;
             else if (("write_file".equals(actionName) || "append_file".equals(actionName)) && config.getAllowedFilePaths().contains(action.path))
                 autoApproved = true;
@@ -354,13 +354,14 @@ class AdminAiService implements Listener
             case "read_file" -> "RESULT read_file\n" + readAllowedFile(action.path, false);
             case "write_file" -> "RESULT write_file\n" + writeAllowedFile(action.path, action.content, false);
             case "append_file" -> "RESULT append_file\n" + writeAllowedFile(action.path, action.content, true);
-            case "run_command" -> "RESULT run_command\n" + runCommand(action.command);
+            case "bash" -> "RESULT bash\n" + runBashCommand(action.command);
+            case "run_command" -> "RESULT run_command\n" + runMinecraftCommand(action.command);
             case "finish" -> "RESULT finish accepted";
-            default -> "RESULT error\nUnknown action. Use read_log, read_file, write_file, append_file, run_command, finish.";
+            default -> "RESULT error\nUnknown action. Use read_log, read_file, write_file, append_file, bash, run_command, finish.";
         };
     }
 
-    private String runCommand(String command) throws IOException, InterruptedException
+    private String runBashCommand(String command) throws IOException, InterruptedException
     {
         if (command == null || command.isBlank())
             return "No command.";
@@ -386,6 +387,31 @@ class AdminAiService implements Listener
         String output = Files.readString(outputFile, StandardCharsets.UTF_8);
         Files.deleteIfExists(outputFile);
         return "exit=" + process.exitValue() + "\n" + truncate(output, config.getInt("admin-ai.max-context-tokens"));
+    }
+
+    private String runMinecraftCommand(String command)
+    {
+        if (command == null || command.isBlank())
+            return "No command.";
+        if (!isCommandAllowed(command))
+            return "Command blocked by admin-ai allowlist/denylist: " + command;
+
+        final String finalCommand = command.startsWith("/") ? command.substring(1) : command;
+        CompletableFuture<String> future = new CompletableFuture<>();
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            try {
+                boolean success = plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), finalCommand);
+                future.complete(success ? "Command dispatched successfully." : "Command dispatch failed.");
+            } catch (Exception e) {
+                future.complete("Error dispatching command: " + e.getMessage());
+            }
+        });
+
+        try {
+            return future.get(10, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            return "Failed to dispatch command: " + e.getMessage();
+        }
     }
 
     private boolean isCommandAllowed(String command)
@@ -532,7 +558,8 @@ class AdminAiService implements Listener
                 {"action":"read_file","path":"path/to/file"}
                 {"action":"write_file","path":"path/to/file","content":"full new file content"}
                 {"action":"append_file","path":"path/to/file","content":"content to append"}
-                {"action":"run_command","command":"allowed command"}
+                {"action":"bash","command":"allowed shell command"}
+                {"action":"run_command","command":"minecraft server command"}
                 {"action":"finish","message":"summary of work done, followed by notes and PROPOSED PLAN: action items if needed"}
                 Safety & Tools:
                 - Use `/update` to pull and build updates for plugins instead of manual git/maven commands when a general update is requested.
@@ -568,7 +595,7 @@ class AdminAiService implements Listener
                 plugin.getServer().broadcast(ChatColor.GRAY + "Path: " + action.path, "mlg.admin");
                 plugin.getLogger().info("Path: " + action.path);
             }
-            if ("run_command".equals(actionName)) {
+            if ("run_command".equals(actionName) || "bash".equals(actionName)) {
                 plugin.getServer().broadcast(ChatColor.GRAY + "Command: " + action.command, "mlg.admin");
                 plugin.getLogger().info("Command: " + action.command);
             }
@@ -597,7 +624,7 @@ class AdminAiService implements Listener
 
     private void recordApproval(String approvalSource, String actionName, AiAction action, boolean proactive, String reason)
     {
-        if ("run_command".equals(actionName))
+        if ("run_command".equals(actionName) || "bash".equals(actionName))
             config.addAllowedCommandPrefix(action.command);
         else if ("write_file".equals(actionName) || "append_file".equals(actionName))
             config.addAllowedFilePath(action.path);
@@ -612,7 +639,7 @@ class AdminAiService implements Listener
             Files.createDirectories(logFile.getParent());
             String details = switch (actionName)
             {
-                case "run_command" -> " command=" + nullToEmpty(action.command);
+                case "run_command", "bash" -> " command=" + nullToEmpty(action.command);
                 case "write_file", "append_file" -> " path=" + nullToEmpty(action.path) + " content_sha256=" + sha256(nullToEmpty(action.content));
                 default -> "";
             };
@@ -671,7 +698,7 @@ class AdminAiService implements Listener
             plugin.getServer().broadcast(
                     ChatColor.GOLD + "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] "
                             + status + ChatColor.GRAY + " " + actionName
-                            + ("run_command".equals(actionName) ? ": " + action.command : "")
+                            + (("run_command".equals(actionName) || "bash".equals(actionName)) ? ": " + action.command : "")
                             + ("write_file".equals(actionName) ? ": " + action.path : ""),
                     "mlg.admin");
             plugin.getServer().broadcast(ChatColor.GRAY + "Reason: " + result.reason(), "mlg.admin");
@@ -680,7 +707,7 @@ class AdminAiService implements Listener
 
     private boolean isDestructive(String actionName)
     {
-        return "write_file".equals(actionName) || "append_file".equals(actionName) || "run_command".equals(actionName);
+        return "write_file".equals(actionName) || "append_file".equals(actionName) || "run_command".equals(actionName) || "bash".equals(actionName);
     }
 
     private String truncate(String input, int max)
