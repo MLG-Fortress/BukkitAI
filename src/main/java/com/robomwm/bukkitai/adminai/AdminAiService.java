@@ -11,6 +11,10 @@ import com.destroystokyo.paper.event.server.ServerExceptionEvent;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -399,16 +403,47 @@ class AdminAiService implements Listener
         final String finalCommand = command.startsWith("/") ? command.substring(1) : command;
         CompletableFuture<String> future = new CompletableFuture<>();
         plugin.getServer().getScheduler().runTask(plugin, () -> {
+            StringBuilder output = new StringBuilder();
             try {
-                boolean success = plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), finalCommand);
-                future.complete(success ? "Command dispatched successfully." : "Command dispatch failed.");
-            } catch (Exception e) {
-                future.complete("Error dispatching command: " + e.getMessage());
+                org.bukkit.command.ConsoleCommandSender console = plugin.getServer().getConsoleSender();
+                org.bukkit.command.CommandSender capturingSender = (org.bukkit.command.CommandSender) Proxy.newProxyInstance(
+                        org.bukkit.command.CommandSender.class.getClassLoader(),
+                        new Class[]{org.bukkit.command.ConsoleCommandSender.class},
+                        (proxy, method, args) -> {
+                            if (method.getName().equals("sendMessage") && args != null) {
+                                for (Object arg : args) {
+                                    if (arg instanceof String) {
+                                        output.append((String) arg).append("\n");
+                                    } else if (arg instanceof String[]) {
+                                        for (String s : (String[]) arg) output.append(s).append("\n");
+                                    }
+                                }
+                            }
+                            try {
+                                return method.invoke(console, args);
+                            } catch (InvocationTargetException e) {
+                                throw e.getCause();
+                            }
+                        }
+                );
+                boolean success = plugin.getServer().dispatchCommand(capturingSender, finalCommand);
+                String result = output.toString().trim();
+                if (result.isEmpty())
+                    result = success ? "Command dispatched successfully (no output)." : "Command dispatch failed.";
+                future.complete(truncate(result, config.getInt("admin-ai.max-context-tokens")));
+            } catch (Throwable e) {
+                StringWriter sw = new StringWriter();
+                e.printStackTrace(new PrintWriter(sw));
+                String result = "Error dispatching command: " + e.getMessage();
+                if (output.length() > 0)
+                    result += "\nOutput so far:\n" + output;
+                result += "\nStack trace:\n" + sw;
+                future.complete(truncate(result, config.getInt("admin-ai.max-context-tokens")));
             }
         });
 
         try {
-            return future.get(10, TimeUnit.SECONDS);
+            return future.get(config.getInt("admin-ai.max-command-seconds"), TimeUnit.SECONDS);
         } catch (Exception e) {
             return "Failed to dispatch command: " + e.getMessage();
         }
@@ -676,11 +711,14 @@ class AdminAiService implements Listener
     {
         if (messages.isEmpty()) return;
         String content = messages.get(messages.size() - 1).content();
-        String snippet = truncate(content, 200);
+        String snippet = truncate(content, 500);
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             String prefix = "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] ";
-            plugin.getServer().broadcast(ChatColor.GOLD + prefix + "Request: " + ChatColor.GRAY + snippet, "mlg.admin");
-            plugin.getLogger().info(prefix + "Request: " + snippet);
+            for (String line : snippet.split("\n"))
+            {
+                plugin.getServer().broadcast(ChatColor.GOLD + prefix + "Request: " + ChatColor.GRAY + line, "mlg.admin");
+                plugin.getLogger().info(prefix + "Request: " + line);
+            }
         });
     }
 
@@ -688,8 +726,11 @@ class AdminAiService implements Listener
     {
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             String prefix = "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] ";
-            plugin.getServer().broadcast(ChatColor.GOLD + prefix + "Response: " + ChatColor.GRAY + response, "mlg.admin");
-            plugin.getLogger().info(prefix + "Response: " + response);
+            for (String line : response.split("\n"))
+            {
+                plugin.getServer().broadcast(ChatColor.GOLD + prefix + "Response: " + ChatColor.GRAY + line, "mlg.admin");
+                plugin.getLogger().info(prefix + "Response: " + line);
+            }
         });
     }
 
