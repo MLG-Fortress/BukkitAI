@@ -416,12 +416,14 @@ class AdminAiService implements Listener
 
     private boolean isCommandAllowed(String command)
     {
-        String padded = " " + command.toLowerCase(Locale.ROOT) + " ";
+        if (command == null) return false;
+        String normalized = command.startsWith("/") ? command.substring(1) : command;
+        String padded = " " + normalized.toLowerCase(Locale.ROOT) + " ";
         for (String denied : config.getStringList("admin-ai.actions.denied-command-contains"))
             if (padded.contains(denied.toLowerCase(Locale.ROOT)))
                 return false;
 
-        List<String> commandTokens = CommandLine.split(command);
+        List<String> commandTokens = CommandLine.split(normalized);
         for (String prefix : config.getStringList("admin-ai.actions.allowed-command-prefixes"))
         {
             List<String> prefixTokens = CommandLine.split(prefix);
