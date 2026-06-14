@@ -45,6 +45,7 @@ class AdminAiService implements Listener
     private final AtomicReference<CompletableFuture<?>> currentTask = new AtomicReference<>();
     private final ApprovalAiClient approvalClient;
     private final java.util.Queue<String> exceptionQueue = new ConcurrentLinkedQueue<>();
+    private boolean wasCompacted = false;
 
     AdminAiService(BukkitAI plugin)
     {
@@ -189,6 +190,7 @@ class AdminAiService implements Listener
 
     private void runAgent(CommandSender sender, String userPrompt, boolean proactive)
     {
+        wasCompacted = false;
         List<AiMessage> messages = new ArrayList<>();
         messages.add(new AiMessage("system", systemPrompt()));
         messages.add(new AiMessage("user", buildInitialPrompt(userPrompt)));
@@ -213,9 +215,8 @@ class AdminAiService implements Listener
         try
         {
             int maxIterations = config.getInt("admin-ai.max-iterations");
-            int startIteration = Math.max(0, (messages.size() - 2) / 2);
 
-            for (int i = startIteration; i < maxIterations; i++)
+            for (int i = 0; i < maxIterations; i++)
             {
                 ensureStillEnabled();
 
@@ -247,8 +248,7 @@ class AdminAiService implements Listener
             if (errorMsg != null && (
                     errorMsg.contains("too large") || 
                     errorMsg.contains("context_length_exceeded") || 
-                    errorMsg.contains("maximum context length") ||
-                    errorMsg.contains("400")))
+                    errorMsg.contains("maximum context length")))
             {
                 send(sender, ChatColor.YELLOW + "Context limit reached, attempting to compact history...");
                 if (compactMessages(messages))
@@ -268,11 +268,16 @@ class AdminAiService implements Listener
         boolean changed = false;
         List<AiMessage> kept = new ArrayList<>();
         
+        // Always keep original system message and initial task
         kept.add(messages.get(0)); // system
         kept.add(messages.get(1)); // initial task
         
-        kept.add(new AiMessage("system", "NOTICE: Previous conversation history has been compacted. " +
-                "Large tool results have been truncated or omitted. You can re-read specific parts of files using 'startLine' and 'endLine' if needed."));
+        // Append notice to the FIRST system message instead of adding a new one in the middle
+        String notice = "\n\nNOTICE: Previous conversation history has been compacted. " +
+                "Large tool results have been truncated or omitted. You can re-read specific parts of files using 'startLine' and 'endLine' if needed.";
+        AiMessage first = messages.get(0);
+        kept.set(0, new AiMessage(first.role(), first.content() + notice));
+        wasCompacted = true;
 
         int verbatimStart = messages.size() - 2;
         
@@ -289,7 +294,7 @@ class AdminAiService implements Listener
                 if (msg.content().length() > 500)
                 {
                     kept.add(new AiMessage("user", "[Result truncated. Use startLine/endLine to re-read specific lines.]\n" + 
-                            truncate(msg.content(), 200)));
+                            truncateMiddle(msg.content(), 400)));
                     changed = true;
                 }
                 else
@@ -304,7 +309,7 @@ class AdminAiService implements Listener
             AiMessage msg = messages.get(i);
             if (msg.content().length() > 1000)
             {
-                kept.add(new AiMessage(msg.role(), "[Result truncated to fit context window.]\n" + truncate(msg.content(), 1000)));
+                kept.add(new AiMessage(msg.role(), "[Result truncated to fit context window.]\n" + truncateMiddle(msg.content(), 1000)));
                 changed = true;
             }
             else
@@ -596,41 +601,24 @@ class AdminAiService implements Listener
         }
 
         if (logOnly)
-            return tailWithRange(resolved, config.getInt("admin-ai.log-tail-lines"), maxBytes);
+        {
+            ArrayList<String> tailLines = new ArrayList<>();
+            int lines = config.getInt("admin-ai.log-tail-lines");
+            try (BufferedReader reader = Files.newBufferedReader(resolved, StandardCharsets.UTF_8))
+            {
+                String line;
+                while ((line = reader.readLine()) != null)
+                {
+                    tailLines.add(line);
+                    if (tailLines.size() > lines)
+                        tailLines.remove(0);
+                }
+            }
+            return truncate(String.join("\n", tailLines), maxBytes);
+        }
+
         byte[] bytes = Files.readAllBytes(resolved);
         return truncate(new String(bytes, StandardCharsets.UTF_8), maxBytes);
-    }
-
-    private String tailWithRange(Path path, int lines, int maxBytes) throws IOException
-    {
-        java.util.Deque<String> lastLines = new java.util.ArrayDeque<>(lines);
-        int total = 0;
-        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8))
-        {
-            String line;
-            while ((line = reader.readLine()) != null)
-            {
-                total++;
-                if (lastLines.size() >= lines)
-                    lastLines.pollFirst();
-                lastLines.addLast(line);
-            }
-        }
-        
-        int startIdx = Math.max(0, total - lines);
-        StringBuilder sb = new StringBuilder();
-        sb.append("[Tail of ").append(path.getFileName()).append(": lines ")
-          .append(startIdx + 1).append("-").append(total).append(" of ").append(total).append("]\n");
-        for (String line : lastLines)
-        {
-            if (sb.length() + line.length() + 1 > maxBytes)
-            {
-                sb.append("... (limit reached) ...");
-                break;
-            }
-            sb.append(line).append("\n");
-        }
-        return sb.toString();
     }
 
     private String readLines(Path path, int start, int end, int maxBytes) throws IOException
@@ -758,13 +746,15 @@ class AdminAiService implements Listener
                 {"action":"append_file","path":"path/to/file","content":"content to append"}
                 {"action":"bash","command":"allowed shell command"}
                 {"action":"run_command","command":"minecraft server command"}
-                {"action":"finish","message":"summary of work done"}
+                {"action":"finish","message":"summary of work done, followed by notes and PROPOSED PLAN: action items if needed"}
+                """ + (wasCompacted ? """
 
                 Large Files & Context:
                 - Results include range metadata like "[Reading filename: lines 50-150 of 1000]".
                 - Use `startLine` and `endLine` to paginate through large files or logs.
                 - If context is compacted, tool results are truncated. Use range metadata to request specific missing parts.
-                
+                """ : "") + """
+
                 Safety & Tools:
                 - Use `/update` to pull and build updates for plugins instead of manual git/maven commands.
                 - Never request destructive commands.
@@ -923,6 +913,14 @@ class AdminAiService implements Listener
         if (input == null || input.length() <= max)
             return input;
         return input.substring(0, max);
+    }
+
+    private String truncateMiddle(String input, int max)
+    {
+        if (input == null || input.length() <= max)
+            return input;
+        int half = max / 2;
+        return input.substring(0, half) + "\n...[middle truncated]...\n" + input.substring(input.length() - half);
     }
 
     private String nullToEmpty(String input)
