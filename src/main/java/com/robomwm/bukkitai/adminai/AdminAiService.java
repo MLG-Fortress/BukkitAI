@@ -196,9 +196,29 @@ class AdminAiService implements Listener
         try
         {
             bootstrapWithInitialLogRead(messages);
-            for (int i = 0; i < config.getInt("admin-ai.max-iterations"); i++)
+            runAgentWithMessages(sender, messages, proactive);
+        }
+        catch (Exception e)
+        {
+            send(sender, ChatColor.RED + "Admin AI failed: " + e.getMessage());
+        }
+        finally
+        {
+            currentProcess.set(null);
+        }
+    }
+
+    private void runAgentWithMessages(CommandSender sender, List<AiMessage> messages, boolean proactive)
+    {
+        try
+        {
+            int maxIterations = config.getInt("admin-ai.max-iterations");
+            int startIteration = Math.max(0, (messages.size() - 2) / 2);
+
+            for (int i = startIteration; i < maxIterations; i++)
             {
                 ensureStillEnabled();
+
                 broadcastRequest(messages, proactive);
                 String response = completeWithFallback(messages);
                 AiAction action = parseAction(response);
@@ -223,12 +243,83 @@ class AdminAiService implements Listener
         }
         catch (Exception e)
         {
-            send(sender, ChatColor.RED + "Admin AI failed: " + e.getMessage());
+            String errorMsg = e.getMessage();
+            if (errorMsg != null && (
+                    errorMsg.contains("too large") || 
+                    errorMsg.contains("context_length_exceeded") || 
+                    errorMsg.contains("maximum context length") ||
+                    errorMsg.contains("400")))
+            {
+                send(sender, ChatColor.YELLOW + "Context limit reached, attempting to compact history...");
+                if (compactMessages(messages))
+                {
+                    runAgentWithMessages(sender, messages, proactive);
+                    return;
+                }
+            }
+            send(sender, ChatColor.RED + "Admin AI failed: " + errorMsg);
         }
-        finally
+    }
+
+    private boolean compactMessages(List<AiMessage> messages)
+    {
+        if (messages.size() <= 4) return false;
+
+        boolean changed = false;
+        List<AiMessage> kept = new ArrayList<>();
+        
+        kept.add(messages.get(0)); // system
+        kept.add(messages.get(1)); // initial task
+        
+        kept.add(new AiMessage("system", "NOTICE: Previous conversation history has been compacted. " +
+                "Large tool results have been truncated or omitted. You can re-read specific parts of files using 'startLine' and 'endLine' if needed."));
+
+        int verbatimStart = messages.size() - 2;
+        
+        for (int i = 2; i < verbatimStart; i++)
         {
-            currentProcess.set(null);
+            AiMessage msg = messages.get(i);
+            if ("assistant".equals(msg.role()))
+            {
+                kept.add(msg);
+                changed = true;
+            }
+            else if ("user".equals(msg.role()))
+            {
+                if (msg.content().length() > 500)
+                {
+                    kept.add(new AiMessage("user", "[Result truncated. Use startLine/endLine to re-read specific lines.]\n" + 
+                            truncate(msg.content(), 200)));
+                    changed = true;
+                }
+                else
+                {
+                    kept.add(msg);
+                }
+            }
         }
+        
+        for (int i = verbatimStart; i < messages.size(); i++)
+        {
+            AiMessage msg = messages.get(i);
+            if (msg.content().length() > 1000)
+            {
+                kept.add(new AiMessage(msg.role(), "[Result truncated to fit context window.]\n" + truncate(msg.content(), 1000)));
+                changed = true;
+            }
+            else
+            {
+                kept.add(msg);
+            }
+        }
+
+        if (changed)
+        {
+            messages.clear();
+            messages.addAll(kept);
+        }
+
+        return changed;
     }
 
     private void bootstrapWithInitialLogRead(List<AiMessage> messages) throws IOException, InterruptedException
@@ -314,7 +405,6 @@ class AdminAiService implements Listener
             else
             {
 
-            // In AI mode, always evaluate via AI (regardless of interactive flag)
             if ("ai".equals(approvalMode))
             {
                 ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
@@ -328,7 +418,6 @@ class AdminAiService implements Listener
                 ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
                 if (result.reason().startsWith("All approval AI providers unavailable"))
                 {
-                    // AI unavailable — fall back to human approval
                     String humanResult = requestHumanApproval(actionName, action, proactive);
                     if (humanResult != null)
                         return humanResult;
@@ -342,7 +431,7 @@ class AdminAiService implements Listener
                     recordApproval("ai", actionName, action, proactive, result.reason());
                 }
             }
-            else if (needsApproval) // "human" mode
+            else if (needsApproval)
             {
                 String humanResult = requestHumanApproval(actionName, action, proactive);
                 if (humanResult != null)
@@ -354,8 +443,8 @@ class AdminAiService implements Listener
 
         return switch (actionName)
         {
-            case "read_log" -> "RESULT read_log\n" + readAllowedFile(action.path, true);
-            case "read_file" -> "RESULT read_file\n" + readAllowedFile(action.path, false);
+            case "read_log" -> "RESULT read_log\n" + readAllowedFile(action.path, true, action.startLine, action.endLine);
+            case "read_file" -> "RESULT read_file\n" + readAllowedFile(action.path, false, action.startLine, action.endLine);
             case "write_file" -> "RESULT write_file\n" + writeAllowedFile(action.path, action.content, false);
             case "append_file" -> "RESULT append_file\n" + writeAllowedFile(action.path, action.content, true);
             case "bash" -> "RESULT bash\n" + runBashCommand(action.command);
@@ -372,9 +461,8 @@ class AdminAiService implements Listener
         if (!isCommandAllowed(command))
             return "Command blocked by admin-ai allowlist/denylist: " + command;
 
-        List<String> tokens = CommandLine.split(command);
         Path outputFile = Files.createTempFile("bukkitai-adminai-", ".log");
-        ProcessBuilder builder = new ProcessBuilder(tokens);
+        ProcessBuilder builder = new ProcessBuilder("bash", "-c", command);
         builder.directory(config.getRootFolder());
         builder.redirectErrorStream(true);
         builder.redirectOutput(outputFile.toFile());
@@ -410,12 +498,31 @@ class AdminAiService implements Listener
                         org.bukkit.command.CommandSender.class.getClassLoader(),
                         new Class[]{org.bukkit.command.ConsoleCommandSender.class},
                         (proxy, method, args) -> {
-                            if (method.getName().equals("sendMessage") && args != null) {
+                            if (method.getName().equals("sendMessage") && args != null && args.length > 0) {
                                 for (Object arg : args) {
                                     if (arg instanceof String) {
                                         output.append((String) arg).append("\n");
                                     } else if (arg instanceof String[]) {
                                         for (String s : (String[]) arg) output.append(s).append("\n");
+                                    } else if (arg != null) {
+                                        // Attempt to handle Adventure Components or other message types via reflection
+                                        try {
+                                            if (arg.getClass().getName().contains("Component")) {
+                                                // Simplified: use a well-known method if it exists, or just toString
+                                                // In Paper/Adventure, many components have a plainText() or similar if serialized
+                                                // But since we can't easily serialize without more reflection, we'll try to find a "content" or "text" or just use toString
+                                                // Most Components in Adventure have a very verbose toString, but it's better than nothing.
+                                                // Actually, let's try to use the PlainTextComponentSerializer if we can find it.
+                                                try {
+                                                    Class<?> serializerClass = Class.forName("net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer");
+                                                    Object serializer = serializerClass.getMethod("plainText").invoke(null);
+                                                    String text = (String) serializerClass.getMethod("serialize", arg.getClass().getInterfaces()[0]).invoke(serializer, arg);
+                                                    output.append(text).append("\n");
+                                                } catch (Exception e) {
+                                                    output.append(arg).append("\n");
+                                                }
+                                            }
+                                        } catch (Exception ignored) {}
                                     }
                                 }
                             }
@@ -474,16 +581,86 @@ class AdminAiService implements Listener
         return false;
     }
 
-    private String readAllowedFile(String path, boolean logOnly) throws IOException
+    private String readAllowedFile(String path, boolean logOnly, Integer startLine, Integer endLine) throws IOException
     {
         Path resolved = resolveAllowedPath(path, logOnly);
         if (!Files.exists(resolved))
             return "File does not exist: " + resolved;
         int maxBytes = config.getInt("admin-ai.max-file-bytes");
+
+        if (startLine != null || endLine != null)
+        {
+            int start = startLine == null ? 1 : startLine;
+            int end = endLine == null ? Integer.MAX_VALUE : endLine;
+            return readLines(resolved, start, end, maxBytes);
+        }
+
         if (logOnly)
-            return tail(resolved, config.getInt("admin-ai.log-tail-lines"), maxBytes);
+            return tailWithRange(resolved, config.getInt("admin-ai.log-tail-lines"), maxBytes);
         byte[] bytes = Files.readAllBytes(resolved);
         return truncate(new String(bytes, StandardCharsets.UTF_8), maxBytes);
+    }
+
+    private String tailWithRange(Path path, int lines, int maxBytes) throws IOException
+    {
+        java.util.Deque<String> lastLines = new java.util.ArrayDeque<>(lines);
+        int total = 0;
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8))
+        {
+            String line;
+            while ((line = reader.readLine()) != null)
+            {
+                total++;
+                if (lastLines.size() >= lines)
+                    lastLines.pollFirst();
+                lastLines.addLast(line);
+            }
+        }
+        
+        int startIdx = Math.max(0, total - lines);
+        StringBuilder sb = new StringBuilder();
+        sb.append("[Tail of ").append(path.getFileName()).append(": lines ")
+          .append(startIdx + 1).append("-").append(total).append(" of ").append(total).append("]\n");
+        for (String line : lastLines)
+        {
+            if (sb.length() + line.length() + 1 > maxBytes)
+            {
+                sb.append("... (limit reached) ...");
+                break;
+            }
+            sb.append(line).append("\n");
+        }
+        return sb.toString();
+    }
+
+    private String readLines(Path path, int start, int end, int maxBytes) throws IOException
+    {
+        StringBuilder sb = new StringBuilder();
+        int total = 0;
+        
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8))
+        {
+            String line;
+            int current = 0;
+            while ((line = reader.readLine()) != null)
+            {
+                current++;
+                if (current >= start && current <= end)
+                {
+                    if (sb.length() + line.length() + 1 <= maxBytes)
+                    {
+                        sb.append(line).append("\n");
+                    }
+                    else if (!sb.toString().endsWith("... (limit reached) ..."))
+                    {
+                        sb.append("... (limit reached) ...");
+                    }
+                }
+            }
+            total = current;
+        }
+
+        return "[Reading " + path.getFileName() + ": lines " + start + "-" + Math.min(end, total) + " of " + total + "]\n" + sb.toString();
     }
 
     private String writeAllowedFile(String path, String content, boolean append) throws IOException
@@ -535,22 +712,6 @@ class AdminAiService implements Listener
         throw new IOException("Path blocked by admin-ai path policy: " + path);
     }
 
-    private String tail(Path path, int lines, int maxBytes) throws IOException
-    {
-        ArrayList<String> tailLines = new ArrayList<>();
-        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8))
-        {
-            String line;
-            while ((line = reader.readLine()) != null)
-            {
-                tailLines.add(line);
-                if (tailLines.size() > lines)
-                    tailLines.remove(0);
-            }
-        }
-        return truncate(String.join("\n", tailLines), maxBytes);
-    }
-
     private AiAction parseAction(String response)
     {
         String json = response.trim();
@@ -591,20 +752,24 @@ class AdminAiService implements Listener
 
                 You must respond with exactly one JSON object and no prose.
                 Valid actions:
-                {"action":"read_log","path":"path/to/log"}
-                {"action":"read_file","path":"path/to/file"}
+                {"action":"read_log","path":"path/to/log","startLine":1,"endLine":100}
+                {"action":"read_file","path":"path/to/file","startLine":50,"endLine":150}
                 {"action":"write_file","path":"path/to/file","content":"full new file content"}
                 {"action":"append_file","path":"path/to/file","content":"content to append"}
                 {"action":"bash","command":"allowed shell command"}
                 {"action":"run_command","command":"minecraft server command"}
-                {"action":"finish","message":"summary of work done, followed by notes and PROPOSED PLAN: action items if needed"}
+                {"action":"finish","message":"summary of work done"}
+
+                Large Files & Context:
+                - Results include range metadata like "[Reading filename: lines 50-150 of 1000]".
+                - Use `startLine` and `endLine` to paginate through large files or logs.
+                - If context is compacted, tool results are truncated. Use range metadata to request specific missing parts.
+                
                 Safety & Tools:
-                - Use `/update` to pull and build updates for plugins instead of manual git/maven commands when a general update is requested.
+                - Use `/update` to pull and build updates for plugins instead of manual git/maven commands.
                 - Never request destructive commands.
                 - Use read_file before write_file.
                 - Prefer git diff/status before commit.
-                - Commit messages must be concise and normal English.
-                - If blocked by policy, explain in finish message.
                 """;
     }
 

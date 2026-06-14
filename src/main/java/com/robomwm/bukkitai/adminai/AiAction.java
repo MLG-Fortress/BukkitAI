@@ -7,4 +7,6 @@ class AiAction
     String command;
     String content;
     String message;
+    Integer startLine;
+    Integer endLine;
 }
