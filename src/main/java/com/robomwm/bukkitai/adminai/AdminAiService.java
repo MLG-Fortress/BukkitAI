@@ -397,7 +397,7 @@ class AdminAiService implements Listener
             boolean needsApproval = config.isInteractive() || proactive;
             
             boolean autoApproved = false;
-            if (("run_command".equals(actionName) || "bash".equals(actionName)) && isCommandAllowed(action.command))
+            if (("run_command".equals(actionName) || "bash".equals(actionName)) && isCommandPreVetted(action.command))
                 autoApproved = true;
             else if (("write_file".equals(actionName) || "append_file".equals(actionName)) && config.getAllowedFilePaths().contains(action.path))
                 autoApproved = true;
@@ -463,8 +463,8 @@ class AdminAiService implements Listener
     {
         if (command == null || command.isBlank())
             return "No command.";
-        if (!isCommandAllowed(command))
-            return "Command blocked by admin-ai allowlist/denylist: " + command;
+        if (isCommandExplicitlyDenied(command))
+            return "Command blocked by admin-ai denylist: " + command;
 
         Path outputFile = Files.createTempFile("bukkitai-adminai-", ".log");
         ProcessBuilder builder = new ProcessBuilder("bash", "-c", command);
@@ -490,8 +490,8 @@ class AdminAiService implements Listener
     {
         if (command == null || command.isBlank())
             return "No command.";
-        if (!isCommandAllowed(command))
-            return "Command blocked by admin-ai allowlist/denylist: " + command;
+        if (isCommandExplicitlyDenied(command))
+            return "Command blocked by admin-ai denylist: " + command;
 
         final String finalCommand = command.startsWith("/") ? command.substring(1) : command;
         CompletableFuture<String> future = new CompletableFuture<>();
@@ -561,14 +561,21 @@ class AdminAiService implements Listener
         }
     }
 
-    private boolean isCommandAllowed(String command)
+    private boolean isCommandExplicitlyDenied(String command)
     {
         if (command == null) return false;
         String normalized = command.startsWith("/") ? command.substring(1) : command;
         String padded = " " + normalized.toLowerCase(Locale.ROOT) + " ";
         for (String denied : config.getStringList("admin-ai.actions.denied-command-contains"))
             if (padded.contains(denied.toLowerCase(Locale.ROOT)))
-                return false;
+                return true;
+        return false;
+    }
+
+    private boolean isCommandPreVetted(String command)
+    {
+        if (command == null) return false;
+        String normalized = command.startsWith("/") ? command.substring(1) : command;
 
         List<String> commandTokens = CommandLine.split(normalized);
         for (String prefix : config.getStringList("admin-ai.actions.allowed-command-prefixes"))

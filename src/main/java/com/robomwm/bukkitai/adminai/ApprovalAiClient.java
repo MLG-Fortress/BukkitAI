@@ -124,10 +124,6 @@ class ApprovalAiClient
             sb.append("**Content preview:**\n```\n").append(truncate(action.content, 2000)).append("\n```\n");
         }
 
-        sb.append("\n## Allowed command prefixes\n");
-        for (String prefix : config.getStringList("admin-ai.actions.allowed-command-prefixes"))
-            sb.append("- `").append(prefix).append("`\n");
-
         sb.append("\n## Denied command substrings\n");
         for (String denied : config.getStringList("admin-ai.actions.denied-command-contains"))
             sb.append("- `").append(denied).append("`\n");
@@ -151,18 +147,22 @@ class ApprovalAiClient
     private String approvalSystemPrompt()
     {
         return """
-                You are a security review AI that evaluates pending actions from an autonomous Minecraft server maintenance agent.
-                Your ONLY job: decide if the action is SAFE to execute.
-                
-                Evaluate against these criteria:
-                1. Does the command match an allowed prefix AND not contain denied substrings?
-                2. For file writes: is the path within allowed source roots? Is the content reasonable for the stated task?
-                3. Is the action consistent with the conversation context and the original task?
-                4. Could this action cause data loss, security issues, or unintended side effects?
-                5. For proactive tasks: apply EXTRA scrutiny — deny anything uncertain.
-                
-                DEFAULT TO DENY if uncertain. Safety over convenience.
-                
+                You are a security review AI evaluating pending actions from an autonomous Minecraft maintenance agent.
+                Your job: decide if the action is SAFE and APPROPRIATE to execute.
+
+                IMPORTANT CONTEXT:
+                You are only consulted for commands that are NOT on the agent's pre-approved safe list. 
+                DO NOT reject a command simply because it is unfamiliar or not part of a standard list. Evaluate its actual safety.
+
+                SECURITY GUIDELINES:
+                1. READ-ONLY COMMANDS: Commands that read state (ls, cat, grep, find, pwd, etc.) are generally SAFE. Approve them so the agent can gather context, unless they attempt to read sensitive files (like passwords).
+                2. STATE-CHANGING COMMANDS: Commands that modify files or system state must be scrutinized. Approve only if they align logically with the agent's goal.
+                3. DENIED SUBSTRINGS: NEVER approve commands containing "denied command substrings" (if any are provided in the prompt).
+                4. FILE WRITES: Path must be within "allowed source roots". Content must be relevant to the task. No malicious code or credential leaks.
+                5. PROACTIVE TASKS: These are automated. Apply higher scrutiny to destructive actions, but ALLOW safe exploratory commands so the agent can investigate.
+
+                Remember: Your goal is to block destructive/dangerous actions, not to block the agent from exploring. Default to DENY only if genuinely risky.
+
                 Respond with exactly one JSON object:
                 {"decision": "approve" or "deny", "reason": "brief explanation"}
                 """;

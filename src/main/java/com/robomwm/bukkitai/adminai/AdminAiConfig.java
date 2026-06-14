@@ -99,8 +99,21 @@ class AdminAiConfig
 
         config.set("admin-ai.actions.log-files", old.getList("admin-ai.actions.log-files", List.of("logs/latest.log")));
         config.set("admin-ai.actions.allowed-command-prefixes", old.getList("admin-ai.actions.allowed-command-prefixes", List.of(
+                "ls",
+                "cat",
+                "grep",
+                "find",
+                "pwd",
+                "head",
+                "tail",
+                "wc",
+                "du",
+                "df",
                 "git status",
                 "git diff",
+                "git log",
+                "git branch",
+                "git show",
                 "git add",
                 "git commit",
                 "git push",
