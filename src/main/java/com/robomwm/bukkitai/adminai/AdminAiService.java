@@ -20,7 +20,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 import java.security.MessageDigest;
@@ -64,6 +66,16 @@ class AdminAiService implements Listener
                 run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true);
         }, 100L); // 5 seconds after startup
 
+        // Recurring proactive maintenance
+        long intervalTicks = config.getInt("admin-ai.proactive-interval-minutes") * 60L * 20L;
+        if (intervalTicks > 0)
+        {
+            plugin.getServer().getScheduler().runTaskTimer(plugin, () -> {
+                if (config.isEnabled() && !isRunning())
+                    run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true);
+            }, intervalTicks, intervalTicks);
+        }
+
         plugin.getServer().getScheduler().runTaskTimer(plugin, this::processQueuedExceptions, 6000L, 6000L); // Every 5 minutes
     }
 
@@ -103,7 +115,7 @@ class AdminAiService implements Listener
     String getStatus()
     {
         return (config.isEnabled() ? ChatColor.GREEN + "enabled" : ChatColor.RED + "disabled")
-                + (config.isInteractive() ? ChatColor.YELLOW + " (interactive)" : ChatColor.GRAY + " (autonomous)")
+                + (config.isInteractive() ? ChatColor.YELLOW + " (interactive)" : ChatColor.GREEN + " (autonomous)")
                 + ChatColor.GOLD + ", task=" + (isRunning() ? "running" : "idle")
                 + ", providers=" + config.getProviders().size();
     }
@@ -214,11 +226,22 @@ class AdminAiService implements Listener
     {
         try
         {
-            int maxIterations = config.getInt("admin-ai.max-iterations");
+            boolean autonomous = proactive && !config.isInteractive();
+            int maxIterations = autonomous
+                    ? config.getInt("admin-ai.autonomous-max-iterations")
+                    : config.getInt("admin-ai.max-iterations");
+            int compactThreshold = config.getInt("admin-ai.compact-threshold-messages");
 
             for (int i = 0; i < maxIterations; i++)
             {
                 ensureStillEnabled();
+
+                // Proactive compaction: compact before hitting context limits
+                if (compactThreshold > 0 && messages.size() > compactThreshold)
+                {
+                    plugin.getLogger().info("Proactive compaction at " + messages.size() + " messages.");
+                    compactMessages(messages);
+                }
 
                 broadcastRequest(messages, proactive);
                 String response = completeWithFallback(messages);
@@ -394,7 +417,8 @@ class AdminAiService implements Listener
         if (isDestructive(actionName))
         {
             String approvalMode = config.getApprovalMode();
-            boolean needsApproval = config.isInteractive() || proactive;
+            boolean autonomous = proactive && !config.isInteractive();
+            boolean needsApproval = config.isInteractive() || (proactive && !autonomous);
             
             boolean autoApproved = false;
             if (("run_command".equals(actionName) || "bash".equals(actionName)) && isCommandPreVetted(action.command))
@@ -423,6 +447,8 @@ class AdminAiService implements Listener
                 ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
                 if (result.reason().startsWith("All approval AI providers unavailable"))
                 {
+                    if (autonomous)
+                        return "RESULT error\nAction blocked: AI approval unavailable and running in autonomous mode (no human fallback).";
                     String humanResult = requestHumanApproval(actionName, action, proactive);
                     if (humanResult != null)
                         return humanResult;
@@ -435,6 +461,15 @@ class AdminAiService implements Listener
                         return "RESULT error\nAction denied by approval AI: " + result.reason();
                     recordApproval("ai", actionName, action, proactive, result.reason());
                 }
+            }
+            else if (autonomous)
+            {
+                // Human approval mode but autonomous: use AI approval as safety net
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
+                broadcastApprovalResult(actionName, action, proactive, result);
+                if (!result.approved())
+                    return "RESULT error\nAction denied by approval AI (autonomous safety): " + result.reason();
+                recordApproval("ai-autonomous", actionName, action, proactive, result.reason());
             }
             else if (needsApproval)
             {
@@ -609,16 +644,16 @@ class AdminAiService implements Listener
 
         if (logOnly)
         {
-            ArrayList<String> tailLines = new ArrayList<>();
             int lines = config.getInt("admin-ai.log-tail-lines");
+            Deque<String> tailLines = new ArrayDeque<>(lines + 1);
             try (BufferedReader reader = Files.newBufferedReader(resolved, StandardCharsets.UTF_8))
             {
                 String line;
                 while ((line = reader.readLine()) != null)
                 {
-                    tailLines.add(line);
+                    tailLines.addLast(line);
                     if (tailLines.size() > lines)
-                        tailLines.remove(0);
+                        tailLines.removeFirst();
                 }
             }
             return truncate(String.join("\n", tailLines), maxBytes);
@@ -738,12 +773,21 @@ class AdminAiService implements Listener
 
     private String systemPrompt()
     {
+        boolean autonomous = !config.isInteractive();
         return """
                 You are an autonomous Minecraft server admin maintenance agent running inside a Bukkit plugin.
                 The server is experimental, testing lots of plugins (minigames, admin tools, etc.).
                 Your job: inspect logs/source, help maintain the server, seek out new forks of plugins if existing ones are unmaintained.
+                """ + (autonomous ? """
+                You are in AUTONOMOUS mode. You should actively fix issues you find rather than just proposing plans.
+                - Investigate errors, read relevant source/configs, and apply fixes directly.
+                - After fixing an issue, continue looking for more issues to fix.
+                - Only use `finish` when you have completed all fixes or exhausted what you can do.
+                - If a fix is too risky or complex, note it in your finish message with "PROPOSED PLAN:" for human review.
+                """ : """
                 If a task is too big and there are no suitable forks, propose a plan in your `finish` action's message.
                 Use the separator "PROPOSED PLAN:" if you have specific actions to recommend after your summary notes.
+                """) + """
 
                 You must respond with exactly one JSON object and no prose.
                 Valid actions:

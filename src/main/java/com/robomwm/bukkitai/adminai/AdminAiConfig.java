@@ -79,6 +79,9 @@ class AdminAiConfig
         config.set("admin-ai.enabled", old.getBoolean("admin-ai.enabled", true));
         config.set("admin-ai.interactive", old.getBoolean("admin-ai.interactive", true));
         config.set("admin-ai.max-iterations", old.getInt("admin-ai.max-iterations", 12));
+        config.set("admin-ai.autonomous-max-iterations", old.getInt("admin-ai.autonomous-max-iterations", 40));
+        config.set("admin-ai.compact-threshold-messages", old.getInt("admin-ai.compact-threshold-messages", 20));
+        config.set("admin-ai.proactive-interval-minutes", old.getInt("admin-ai.proactive-interval-minutes", 60));
         config.set("admin-ai.max-command-seconds", old.getInt("admin-ai.max-command-seconds", 300));
         config.set("admin-ai.max-file-bytes", old.getInt("admin-ai.max-file-bytes", 65536));
         config.set("admin-ai.max-context-tokens", old.getInt("admin-ai.max-context-tokens", 12000));

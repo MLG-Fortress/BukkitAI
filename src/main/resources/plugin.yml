@@ -6,5 +6,5 @@ author: RoboMWM
 commands:
   adminai:
     description: Admin AI maintenance tools.
-    usage: /<command> <on|off|status|reload|abort|run <prompt>|approve|deny|interactive [on|off]>
+    usage: /<command> <on|off|status|reload|abort|run <prompt>|approve|deny|interactive [on|off]|autonomous [on|off]|check>
     permission: mlg.admin

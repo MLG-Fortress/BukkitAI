@@ -5,11 +5,20 @@ import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
 
 import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.stream.Collectors;
 
-public class AdminAiCommand implements CommandExecutor
+public class AdminAiCommand implements CommandExecutor, TabCompleter
 {
+    private static final List<String> SUBCOMMANDS = List.of(
+            "on", "off", "status", "reload", "abort", "run", "approve", "deny",
+            "interactive", "autonomous", "check");
+    private static final List<String> ON_OFF = List.of("on", "off");
+
     private final AdminAiService adminAiService;
 
     public AdminAiCommand(BukkitAI plugin)
@@ -66,6 +75,18 @@ public class AdminAiCommand implements CommandExecutor
                 adminAiService.setInteractive(interactive);
                 sender.sendMessage(ChatColor.GREEN + "Interactive mode " + (interactive ? "enabled" : "disabled") + ".");
                 return true;
+            case "autonomous":
+                if (args.length < 2)
+                {
+                    boolean isAutonomous = !adminAiService.getStatus().contains("interactive");
+                    sender.sendMessage(ChatColor.GOLD + "Autonomous mode: " + (isAutonomous ? "on" : "off"));
+                    return true;
+                }
+                boolean autonomous = args[1].equalsIgnoreCase("on") || args[1].equalsIgnoreCase("true");
+                adminAiService.setInteractive(!autonomous);
+                sender.sendMessage(ChatColor.GREEN + "Autonomous mode " + (autonomous ? "enabled" : "disabled")
+                        + ". Proactive tasks will " + (autonomous ? "fix issues directly" : "propose plans") + ".");
+                return true;
             case "reload":
                 adminAiService.reload();
                 sender.sendMessage(ChatColor.GREEN + "Admin AI config reloaded.");
@@ -82,6 +103,35 @@ public class AdminAiCommand implements CommandExecutor
             default:
                 return false;
         }
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args)
+    {
+        if (!sender.hasPermission("mlg.admin"))
+            return List.of();
+
+        if (args.length == 1)
+        {
+            String prefix = args[0].toLowerCase(Locale.ROOT);
+            return SUBCOMMANDS.stream()
+                    .filter(s -> s.startsWith(prefix))
+                    .collect(Collectors.toList());
+        }
+
+        if (args.length == 2)
+        {
+            String sub = args[0].toLowerCase(Locale.ROOT);
+            if ("interactive".equals(sub) || "autonomous".equals(sub))
+            {
+                String prefix = args[1].toLowerCase(Locale.ROOT);
+                return ON_OFF.stream()
+                        .filter(s -> s.startsWith(prefix))
+                        .collect(Collectors.toList());
+            }
+        }
+
+        return List.of();
     }
 
     public void shutdown()

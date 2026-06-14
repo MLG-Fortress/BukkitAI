@@ -10,6 +10,7 @@ public class BukkitAI extends JavaPlugin {
     public void onEnable() {
         adminAiCommand = new AdminAiCommand(this);
         getCommand("adminai").setExecutor(adminAiCommand);
+        getCommand("adminai").setTabCompleter(adminAiCommand);
         getLogger().info("BukkitAI enabled.");
     }
 
