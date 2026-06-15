@@ -202,15 +202,16 @@ class AdminAiService implements Listener
 
     private void runAgent(CommandSender sender, String userPrompt, boolean proactive)
     {
-        wasCompacted = false;
-        List<AiMessage> messages = new ArrayList<>();
-        messages.add(new AiMessage("system", systemPrompt()));
-        messages.add(new AiMessage("user", buildInitialPrompt(userPrompt)));
-
         try
         {
-            bootstrapWithInitialLogRead(messages);
-            runAgentWithMessages(sender, messages, proactive);
+            boolean autonomous = proactive && !config.isInteractive();
+            String plan = runSession(sender, userPrompt, proactive, true);
+            
+            if (plan != null && autonomous && plan.contains("PROPOSED PLAN:"))
+            {
+                String execPrompt = "Execute the following proposed plan:\n" + plan;
+                runSession(sender, execPrompt, proactive, false);
+            }
         }
         catch (Exception e)
         {
@@ -222,7 +223,20 @@ class AdminAiService implements Listener
         }
     }
 
-    private void runAgentWithMessages(CommandSender sender, List<AiMessage> messages, boolean proactive)
+    private String runSession(CommandSender sender, String userPrompt, boolean proactive, boolean isPlanning) throws Exception
+    {
+        wasCompacted = false;
+        List<AiMessage> messages = new ArrayList<>();
+        messages.add(new AiMessage("system", systemPrompt(isPlanning)));
+        messages.add(new AiMessage("user", buildInitialPrompt(userPrompt)));
+
+        if (isPlanning)
+            bootstrapWithInitialLogRead(messages);
+
+        return runAgentWithMessages(sender, messages, proactive, isPlanning);
+    }
+
+    private String runAgentWithMessages(CommandSender sender, List<AiMessage> messages, boolean proactive, boolean isPlanning) throws Exception
     {
         try
         {
@@ -260,13 +274,13 @@ class AdminAiService implements Listener
                 if (!"finish".equalsIgnoreCase(action.action))
                     broadcastResponse(response, proactive);
                 messages.add(new AiMessage("assistant", response));
-                String result = executeAction(action, messages, proactive);
+                String result = executeAction(action, messages, proactive, isPlanning);
                 messages.add(new AiMessage("user", result));
                 if ("finish".equalsIgnoreCase(action.action))
                 {
-                    logAiNotes(action.message);
+                    if (isPlanning) logAiNotes(action.message);
                     send(sender, ChatColor.GREEN + "Admin AI done: " + nullToEmpty(action.message));
-                    return;
+                    return action.message;
                 }
             }
             send(sender, ChatColor.YELLOW + "Admin AI stopped: iteration limit reached.");
@@ -287,12 +301,12 @@ class AdminAiService implements Listener
                 send(sender, ChatColor.YELLOW + "Context limit reached, attempting to compact history...");
                 if (compactMessages(messages))
                 {
-                    runAgentWithMessages(sender, messages, proactive);
-                    return;
+                    return runAgentWithMessages(sender, messages, proactive, isPlanning);
                 }
             }
             send(sender, ChatColor.RED + "Admin AI failed: " + errorMsg);
         }
+        return null;
     }
 
     private boolean compactMessages(List<AiMessage> messages)
@@ -354,7 +368,7 @@ class AdminAiService implements Listener
         initialAction.path = logFiles.get(0);
 
         messages.add(new AiMessage("assistant", gson.toJson(initialAction)));
-        messages.add(new AiMessage("user", executeAction(initialAction, messages, true)));
+        messages.add(new AiMessage("user", executeAction(initialAction, messages, true, true)));
     }
 
     private void logAiNotes(String message) {
@@ -402,10 +416,15 @@ class AdminAiService implements Listener
         throw last == null ? new IOException("No enabled providers.") : last;
     }
 
-    private String executeAction(AiAction action, List<AiMessage> messages, boolean proactive) throws IOException, InterruptedException
+    private String executeAction(AiAction action, List<AiMessage> messages, boolean proactive, boolean isPlanning) throws IOException, InterruptedException
     {
         ensureStillEnabled();
         String actionName = action.action == null ? "" : action.action.toLowerCase(Locale.ROOT);
+
+        if (isPlanning && ("write_file".equals(actionName) || "append_file".equals(actionName) || "run_command".equals(actionName)))
+        {
+            return "RESULT error\nYou are in PLANNING MODE. Do not use destructive actions like write_file, append_file, or run_command. Gather info and use `finish`.";
+        }
 
         if (isDestructive(actionName))
         {
@@ -797,25 +816,35 @@ class AdminAiService implements Listener
                 + String.join("\n", config.getStringList("admin-ai.actions.log-files"));
     }
 
-    private String systemPrompt()
+    private String systemPrompt(boolean isPlanning)
     {
         boolean autonomous = !config.isInteractive();
+        String modeText = isPlanning ? """
+                You are in PLANNING MODE. You must ONLY read logs and configs to investigate issues.
+                Do NOT execute fixes (no write_file, append_file, or run_command).
+                When you understand the issues, use `finish` with your notes and "PROPOSED PLAN:" detailing the fix.
+                """ : (autonomous ? """
+                You are in EXECUTION MODE (Autonomous). You must execute the provided plan to fix issues.
+                - Apply fixes directly using write_file or run_command.
+                - After executing the plan, use `finish`.
+                """ : """
+                If a task is too big and there are no suitable forks, propose a plan in your `finish` action's message.
+                Use the separator "PROPOSED PLAN:" if you have specific actions to recommend after your summary notes.
+                """);
+
         return """
                 You are an autonomous Minecraft server admin maintenance agent running inside a Bukkit plugin.
                 The server is experimental, testing lots of plugins (minigames, admin tools, etc.).
                 Your job: inspect logs and configurations, help maintain the server, and seek out new forks of plugins if existing ones are broken.
-                """ + (autonomous ? """
-                You are in AUTONOMOUS mode. You should actively fix issues you find rather than just proposing plans.
+                
+                """ + modeText + """
                 - Investigate errors by reading logs and plugin configurations (e.g. `plugins/PluginName/config.yml`).
                 - You are in a live server environment. Plugin source code (.java files) and git repositories are NOT locally available.
                 - Do NOT attempt to read, write, or search for .java files.
                 - To update a plugin or switch to a working fork, use the Minecraft command `/update <plugin_name>` instead of manual git/maven commands.
                 - Only use `finish` when you have completed all fixes or exhausted what you can do.
                 - If a fix is too risky or complex, note it in your finish message with "PROPOSED PLAN:" for human review.
-                """ : """
-                If a task is too big and there are no suitable forks, propose a plan in your `finish` action's message.
-                Use the separator "PROPOSED PLAN:" if you have specific actions to recommend after your summary notes.
-                """) + """
+                """ + """
 
                 You must respond with exactly one JSON object and no prose.
                 Valid actions:
