@@ -37,7 +37,7 @@ class OpenAiCompatibleClient
             throw new IOException("Provider " + provider.name() + " has no model configured.");
         requestBody.addProperty("model", model);
         requestBody.add("messages", gson.toJsonTree(messages));
-        requestBody.addProperty("stream", false);
+        requestBody.addProperty("stream", true);
         if ("simple-chat-api".equalsIgnoreCase(provider.protocol()))
             requestBody.addProperty("message", messages.get(messages.size() - 1).content());
         else if ("ollama-native".equalsIgnoreCase(provider.protocol()) || "ollama".equalsIgnoreCase(provider.protocol()))
@@ -80,38 +80,79 @@ class OpenAiCompatibleClient
         if (!provider.apiKey().isBlank())
             requestBuilder.header("Authorization", "Bearer " + provider.apiKey());
 
-        HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
-        String responseBody = response.body();
+        HttpResponse<java.util.stream.Stream<String>> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofLines());
 
         if (response.statusCode() < 200 || response.statusCode() >= 300)
         {
             String errorMessage = provider.name() + " returned HTTP " + response.statusCode();
-            if (response.statusCode() >= 400 && response.statusCode() < 500 && responseBody != null && !responseBody.isBlank())
-                errorMessage += ": " + responseBody;
             throw new IOException(errorMessage);
         }
 
-        if (responseBody == null || responseBody.isBlank())
+        StringBuilder fullResponse = new StringBuilder();
+        StringBuilder lineBuffer = new StringBuilder();
+
+        response.body().forEach(line -> {
+            if (line.isEmpty() || line.startsWith(":")) return;
+            String jsonStr = line;
+            if (line.startsWith("data: ")) {
+                jsonStr = line.substring(6).trim();
+                if (jsonStr.equals("[DONE]")) return;
+            }
+
+            try {
+                JsonObject json = JsonParser.parseString(jsonStr).getAsJsonObject();
+                String content = extractContent(json);
+                if (content != null && !content.isEmpty()) {
+                    fullResponse.append(content);
+                    lineBuffer.append(content);
+                    int newlineIdx;
+                    while ((newlineIdx = lineBuffer.indexOf("\n")) >= 0) {
+                        String completeLine = lineBuffer.substring(0, newlineIdx);
+                        logger.info("[AI Stream] " + completeLine);
+                        lineBuffer.delete(0, newlineIdx + 1);
+                    }
+                }
+            } catch (Exception e) {
+                // Ignore parsing errors for incomplete or non-JSON chunks
+            }
+        });
+
+        if (lineBuffer.length() > 0) {
+            logger.info("[AI Stream] " + lineBuffer.toString());
+        }
+
+        if (fullResponse.length() == 0)
             throw new IOException(provider.name() + " returned empty response.");
 
-        JsonObject json = JsonParser.parseString(responseBody).getAsJsonObject();
+        return fullResponse.toString();
+    }
+
+    private String extractContent(JsonObject json)
+    {
         if (json.has("choices"))
         {
             JsonArray choices = json.getAsJsonArray("choices");
             if (!choices.isEmpty())
-                return choices.get(0).getAsJsonObject().getAsJsonObject("message").get("content").getAsString();
+            {
+                JsonObject choice = choices.get(0).getAsJsonObject();
+                if (choice.has("delta") && choice.getAsJsonObject("delta").has("content"))
+                    return choice.getAsJsonObject("delta").get("content").getAsString();
+                if (choice.has("message") && choice.getAsJsonObject("message").has("content"))
+                    return choice.getAsJsonObject("message").get("content").getAsString();
+            }
         }
         if (json.has("message") && json.get("message").isJsonObject())
-            return json.getAsJsonObject("message").get("content").getAsString();
-        if (json.has("message") && json.get("message").isJsonPrimitive())
-            return json.get("message").getAsString();
+        {
+            JsonObject msg = json.getAsJsonObject("message");
+            if (msg.has("content")) return msg.get("content").getAsString();
+        }
         if (json.has("content"))
             return json.get("content").getAsString();
         if (json.has("response"))
             return json.get("response").getAsString();
         if (json.has("text"))
             return json.get("text").getAsString();
-        throw new IOException(provider.name() + " response had no chat content.");
+        return null;
     }
 
     private String truncate(String input, int max)
