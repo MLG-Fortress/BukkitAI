@@ -423,7 +423,7 @@ class AdminAiService implements Listener
 
         if (isPlanning && ("write_file".equals(actionName) || "append_file".equals(actionName) || "run_command".equals(actionName)))
         {
-            return "RESULT error\nYou are in PLANNING MODE. Do not use destructive actions like write_file, append_file, or run_command. Gather info and use `finish`.";
+            return "RESULT error\nYou are in PLANNING MODE. Gather info and use `finish` to propose a plan.";
         }
 
         if (isDestructive(actionName))
@@ -448,7 +448,7 @@ class AdminAiService implements Listener
 
             if ("ai".equals(approvalMode))
             {
-                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, isPlanning);
                 broadcastApprovalResult(actionName, action, proactive, result);
                 if (!result.approved())
                     return "RESULT error\nAction denied by approval AI: " + result.reason();
@@ -456,7 +456,7 @@ class AdminAiService implements Listener
             }
             else if ("ai-fallback-human".equals(approvalMode))
             {
-                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, isPlanning);
                 if (result.reason().startsWith("All approval AI providers unavailable"))
                 {
                     if (autonomous)
@@ -477,7 +477,7 @@ class AdminAiService implements Listener
             else if (autonomous)
             {
                 // Human approval mode but autonomous: use AI approval as safety net
-                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive);
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, isPlanning);
                 broadcastApprovalResult(actionName, action, proactive, result);
                 if (!result.approved())
                     return "RESULT error\nAction denied by approval AI (autonomous safety): " + result.reason();
@@ -820,8 +820,7 @@ class AdminAiService implements Listener
     {
         boolean autonomous = !config.isInteractive();
         String modeText = isPlanning ? """
-                You are in PLANNING MODE. You must ONLY read logs and configs to investigate issues.
-                Do NOT execute fixes (no write_file, append_file, or run_command).
+                You are in PLANNING MODE. Investigate issues and propose a plan.
                 When you understand the issues, use `finish` with your notes and "PROPOSED PLAN:" detailing the fix.
                 """ : (autonomous ? """
                 You are in EXECUTION MODE (Autonomous). You must execute the provided plan to fix issues.
@@ -850,10 +849,12 @@ class AdminAiService implements Listener
                 Valid actions:
                 {"action":"read_log","path":"path/to/log","startLine":1,"endLine":100}
                 {"action":"read_file","path":"path/to/file","startLine":50,"endLine":150}
+                """ + (isPlanning ? "" : """
                 {"action":"write_file","path":"path/to/file","content":"full new file content"}
                 {"action":"append_file","path":"path/to/file","content":"content to append"}
-                {"action":"bash","command":"allowed shell command"}
                 {"action":"run_command","command":"minecraft server command"}
+                """) + """
+                {"action":"bash","command":"allowed shell command"}
                 {"action":"finish","message":"summary of work done, followed by notes and PROPOSED PLAN: action items if needed"}
                 """ + (wasCompacted ? """
 
@@ -866,7 +867,9 @@ class AdminAiService implements Listener
                 Safety & Tools:
                 - Use `/update <plugin_name>` to pull and build updates for plugins instead of manual git/maven commands.
                 - Never request destructive commands.
+                """ + (isPlanning ? "" : """
                 - Use read_file before write_file for configuration files.
+                """) + """
                 - Use `read_log` without startLine/endLine to tail the latest logs.
                 - Use `bash` with `grep -rn` or `find` to search across logs and configurations efficiently instead of reading entire files.
                 """;

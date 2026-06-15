@@ -35,12 +35,13 @@ class ApprovalAiClient
      * @param action          the pending action
      * @param conversationLog recent conversation context (last few messages)
      * @param proactive       whether this is a proactive (automated) task
+     * @param isPlanning      whether the agent is in planning mode
      * @return result with approved/denied and reasoning
      */
-    ApprovalResult evaluate(AiAction action, List<AiMessage> conversationLog, boolean proactive)
+    ApprovalResult evaluate(AiAction action, List<AiMessage> conversationLog, boolean proactive, boolean isPlanning)
     {
         String actionName = action.action == null ? "unknown" : action.action;
-        String prompt = buildApprovalPrompt(action, conversationLog, proactive);
+        String prompt = buildApprovalPrompt(action, conversationLog, proactive, isPlanning);
 
         List<AiMessage> messages = List.of(
                 new AiMessage("system", approvalSystemPrompt()),
@@ -108,10 +109,11 @@ class ApprovalAiClient
         }
     }
 
-    private String buildApprovalPrompt(AiAction action, List<AiMessage> conversationLog, boolean proactive)
+    private String buildApprovalPrompt(AiAction action, List<AiMessage> conversationLog, boolean proactive, boolean isPlanning)
     {
         StringBuilder sb = new StringBuilder();
         sb.append("## Pending Action Review\n\n");
+        sb.append("**Mode:** ").append(isPlanning ? "PLANNING" : "EXECUTION").append('\n');
         sb.append("**Task type:** ").append(proactive ? "PROACTIVE (automated)" : "MANUAL (admin-initiated)").append('\n');
         sb.append("**Action:** ").append(action.action).append('\n');
 
@@ -151,17 +153,15 @@ class ApprovalAiClient
                 Your job: decide if the action is SAFE and APPROPRIATE to execute.
 
                 IMPORTANT CONTEXT:
-                You are only consulted for commands that are NOT on the agent's pre-approved safe list. 
-                DO NOT reject a command simply because it is unfamiliar or not part of a standard list. Evaluate its actual safety.
+                - Actions are only sent to you if they are not on a pre-approved safe list.
+                - Evaluate the actual safety and intent, not just whether the command is familiar.
 
                 SECURITY GUIDELINES:
-                1. READ-ONLY COMMANDS: Commands that read state (ls, cat, grep, find, pwd, etc.) are generally SAFE. Approve them so the agent can gather context, unless they attempt to read sensitive files (like passwords).
-                2. STATE-CHANGING COMMANDS: Commands that modify files or system state must be scrutinized. Approve only if they align logically with the agent's goal.
-                3. DENIED SUBSTRINGS: NEVER approve commands containing "denied command substrings" (if any are provided in the prompt).
-                4. FILE WRITES: Path must be within "allowed source roots". Content must be relevant to the task. No malicious code or credential leaks.
-                5. PROACTIVE TASKS: These are automated. Apply higher scrutiny to destructive actions, but ALLOW safe exploratory commands so the agent can investigate.
-
-                Remember: Your goal is to block destructive/dangerous actions, not to block the agent from exploring. Default to DENY only if genuinely risky.
+                1. READ-ONLY: Commands that only read state (e.g. searching, listing) are generally SAFE.
+                2. STATE-CHANGING: Scrutinize actions that modify files or system state. They must align with the agent's goal.
+                3. PLANNING MODE: When in planning mode, the agent should only be performing information-gathering actions.
+                4. DENIED SUBSTRINGS: NEVER approve actions containing denied substrings provided in the prompt.
+                5. SOURCE ROOTS: File paths must be within allowed source roots.
 
                 Respond with exactly one JSON object:
                 {"decision": "approve" or "deny", "reason": "brief explanation"}
