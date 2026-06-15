@@ -46,10 +46,7 @@ class OpenAiCompatibleClient
             options.put("temperature", 0.1);
             options.putAll(provider.sampling());
             if (model.toLowerCase().contains("qwen"))
-            {
                 options.put("include_reasoning", false);
-                requestBody.add("chat_template_kwargs", gson.toJsonTree(java.util.Map.of("enable_thinking", false)));
-            }
             requestBody.add("options", gson.toJsonTree(options));
         }
         else
@@ -111,6 +108,10 @@ class OpenAiCompatibleClient
                         logger.info("[AI Stream] " + completeLine);
                         lineBuffer.delete(0, newlineIdx + 1);
                     }
+                    if (lineBuffer.length() > 80) {
+                        logger.info("[AI Stream] " + lineBuffer.toString());
+                        lineBuffer.setLength(0);
+                    }
                 }
             } catch (Exception e) {
                 // Ignore parsing errors for incomplete or non-JSON chunks
@@ -135,19 +136,31 @@ class OpenAiCompatibleClient
             if (!choices.isEmpty())
             {
                 JsonObject choice = choices.get(0).getAsJsonObject();
-                if (choice.has("delta") && choice.getAsJsonObject("delta").has("content"))
-                    return choice.getAsJsonObject("delta").get("content").getAsString();
-                if (choice.has("message") && choice.getAsJsonObject("message").has("content"))
-                    return choice.getAsJsonObject("message").get("content").getAsString();
+                if (choice.has("delta")) {
+                    JsonObject delta = choice.getAsJsonObject("delta");
+                    if (delta.has("content")) return delta.get("content").getAsString();
+                    if (delta.has("reasoning_content")) return "[Thinking] " + delta.get("reasoning_content").getAsString();
+                    if (delta.has("thinking")) return "[Thinking] " + delta.get("thinking").getAsString();
+                }
+                if (choice.has("message")) {
+                    JsonObject message = choice.getAsJsonObject("message");
+                    if (message.has("content")) return message.get("content").getAsString();
+                    if (message.has("reasoning_content")) return "[Thinking] " + message.get("reasoning_content").getAsString();
+                }
             }
         }
         if (json.has("message") && json.get("message").isJsonObject())
         {
             JsonObject msg = json.getAsJsonObject("message");
             if (msg.has("content")) return msg.get("content").getAsString();
+            if (msg.has("thinking")) return "[Thinking] " + msg.get("thinking").getAsString();
         }
         if (json.has("content"))
             return json.get("content").getAsString();
+        if (json.has("reasoning_content"))
+            return "[Thinking] " + json.get("reasoning_content").getAsString();
+        if (json.has("thinking"))
+            return "[Thinking] " + json.get("thinking").getAsString();
         if (json.has("response"))
             return json.get("response").getAsString();
         if (json.has("text"))
