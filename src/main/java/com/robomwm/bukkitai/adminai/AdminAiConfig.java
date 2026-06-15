@@ -77,15 +77,15 @@ class AdminAiConfig
 
         // Repopulate with only recognized keys
         config.set("admin-ai.enabled", old.getBoolean("admin-ai.enabled", true));
-        config.set("admin-ai.interactive", old.getBoolean("admin-ai.interactive", true));
-        config.set("admin-ai.max-iterations", old.getInt("admin-ai.max-iterations", 12));
-        config.set("admin-ai.autonomous-max-iterations", old.getInt("admin-ai.autonomous-max-iterations", 40));
-        config.set("admin-ai.compact-threshold-messages", old.getInt("admin-ai.compact-threshold-messages", 20));
-        config.set("admin-ai.proactive-interval-minutes", old.getInt("admin-ai.proactive-interval-minutes", 60));
+        config.set("admin-ai.interactive", old.getBoolean("admin-ai.interactive", false));
+        config.set("admin-ai.max-iterations", old.getInt("admin-ai.max-iterations", 20));
+        config.set("admin-ai.autonomous-max-iterations", old.getInt("admin-ai.autonomous-max-iterations", 100));
+        config.set("admin-ai.compact-threshold-messages", old.getInt("admin-ai.compact-threshold-messages", 15));
+        config.set("admin-ai.proactive-interval-minutes", old.getInt("admin-ai.proactive-interval-minutes", 10));
         config.set("admin-ai.max-command-seconds", old.getInt("admin-ai.max-command-seconds", 300));
-        config.set("admin-ai.max-file-bytes", old.getInt("admin-ai.max-file-bytes", 65536));
-        config.set("admin-ai.max-context-tokens", old.getInt("admin-ai.max-context-tokens", 12000));
-        config.set("admin-ai.log-tail-lines", old.getInt("admin-ai.log-tail-lines", 200));
+        config.set("admin-ai.max-file-bytes", old.getInt("admin-ai.max-file-bytes", 131072));
+        config.set("admin-ai.max-context-tokens", old.getInt("admin-ai.max-context-tokens", 32000));
+        config.set("admin-ai.log-tail-lines", old.getInt("admin-ai.log-tail-lines", 500));
         config.set("admin-ai.approval-mode", old.getString("admin-ai.approval-mode", "ai"));
         config.set("admin-ai.approval-timeout-minutes", old.getInt("admin-ai.approval-timeout-minutes", 5));
         config.set("admin-ai.provider-order", old.getList("admin-ai.provider-order", List.of("ollama", "arliai")));

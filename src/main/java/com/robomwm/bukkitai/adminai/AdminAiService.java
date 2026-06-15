@@ -297,7 +297,7 @@ class AdminAiService implements Listener
 
     private boolean compactMessages(List<AiMessage> messages)
     {
-        if (messages.size() <= 4) return false;
+        if (messages.size() <= 6) return false;
 
         boolean changed = false;
         List<AiMessage> kept = new ArrayList<>();
@@ -306,51 +306,33 @@ class AdminAiService implements Listener
         kept.add(messages.get(0)); // system
         kept.add(messages.get(1)); // initial task
         
-        // Append notice to the FIRST system message instead of adding a new one in the middle
         String notice = "\n\nNOTICE: Previous conversation history has been compacted. " +
-                "Large tool results have been truncated or omitted. You can re-read specific parts of files using 'startLine' and 'endLine' if needed.";
+                "Older messages were removed. You can re-read specific parts of files using 'startLine' and 'endLine' if needed.";
         AiMessage first = messages.get(0);
-        kept.set(0, new AiMessage(first.role(), first.content() + notice));
+        if (!first.content().contains("NOTICE: Previous conversation history has been compacted")) {
+            kept.set(0, new AiMessage(first.role(), first.content() + notice));
+        } else {
+            kept.set(0, first);
+        }
         wasCompacted = true;
 
-        int verbatimStart = messages.size() - 2;
+        // Keep the last 4 messages (2 interactions)
+        int keepStart = Math.max(2, messages.size() - 4);
         
-        for (int i = 2; i < verbatimStart; i++)
+        for (int i = keepStart; i < messages.size(); i++)
         {
             AiMessage msg = messages.get(i);
-            if ("assistant".equals(msg.role()))
+            if (msg.content().length() > 2000)
             {
-                kept.add(msg);
-                changed = true;
-            }
-            else if ("user".equals(msg.role()))
-            {
-                if (msg.content().length() > 500)
-                {
-                    kept.add(new AiMessage("user", "[Result truncated. Use startLine/endLine to re-read specific lines.]\n" + 
-                            truncateMiddle(msg.content(), 400)));
-                    changed = true;
-                }
-                else
-                {
-                    kept.add(msg);
-                }
-            }
-        }
-        
-        for (int i = verbatimStart; i < messages.size(); i++)
-        {
-            AiMessage msg = messages.get(i);
-            if (msg.content().length() > 1000)
-            {
-                kept.add(new AiMessage(msg.role(), "[Result truncated to fit context window.]\n" + truncateMiddle(msg.content(), 1000)));
-                changed = true;
+                kept.add(new AiMessage(msg.role(), "[Result truncated to fit context window.]\n" + truncateMiddle(msg.content(), 2000)));
             }
             else
             {
                 kept.add(msg);
             }
         }
+
+        if (kept.size() < messages.size()) changed = true;
 
         if (changed)
         {
@@ -855,6 +837,8 @@ class AdminAiService implements Listener
                 - Never request destructive commands.
                 - Use read_file before write_file.
                 - Prefer git diff/status before commit.
+                - Use `read_log` without startLine/endLine to tail the latest logs.
+                - Use `bash` with `grep -rn` or `find` to search across the codebase or logs efficiently instead of reading entire files.
                 """;
     }
 
