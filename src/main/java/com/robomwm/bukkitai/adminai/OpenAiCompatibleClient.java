@@ -114,7 +114,7 @@ class OpenAiCompatibleClient
                     }
                 }
             } catch (Exception e) {
-                // Ignore parsing errors for incomplete or non-JSON chunks
+                logger.warning("Failed to parse AI stream chunk: " + line + ". Error: " + e.getMessage());
             }
         });
 

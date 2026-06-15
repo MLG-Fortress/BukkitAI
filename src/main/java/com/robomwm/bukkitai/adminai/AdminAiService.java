@@ -274,7 +274,19 @@ class AdminAiService implements Listener
                 if (!"finish".equalsIgnoreCase(action.action))
                     broadcastResponse(response, proactive);
                 messages.add(new AiMessage("assistant", response));
-                String result = executeAction(action, messages, proactive, isPlanning);
+
+                String result;
+                try
+                {
+                    result = executeAction(action, messages, proactive, isPlanning);
+                }
+                catch (Throwable e)
+                {
+                    result = "RESULT error\nAn unexpected error occurred during execution: " + e.getMessage();
+                    plugin.getLogger().warning("Error executing AI action: " + e.getMessage());
+                    e.printStackTrace();
+                }
+
                 messages.add(new AiMessage("user", result));
                 if ("finish".equalsIgnoreCase(action.action))
                 {
@@ -368,7 +380,14 @@ class AdminAiService implements Listener
         initialAction.path = logFiles.get(0);
 
         messages.add(new AiMessage("assistant", gson.toJson(initialAction)));
-        messages.add(new AiMessage("user", executeAction(initialAction, messages, true, true)));
+        try
+        {
+            messages.add(new AiMessage("user", executeAction(initialAction, messages, true, true)));
+        }
+        catch (Throwable e)
+        {
+            messages.add(new AiMessage("user", "RESULT error\nBootstrap failed: " + e.getMessage()));
+        }
     }
 
     private void logAiNotes(String message) {
@@ -502,6 +521,7 @@ class AdminAiService implements Listener
             case "bash" -> "RESULT bash\n" + runBashCommand(action.command);
             case "run_command" -> "RESULT run_command\n" + runMinecraftCommand(action.command);
             case "finish" -> "RESULT finish accepted";
+            case "invalid_json" -> "RESULT error\n" + action.message;
             default -> "RESULT error\nUnknown action. Use read_log, read_file, write_file, append_file, bash, run_command, finish.";
         };
     }
