@@ -840,7 +840,7 @@ class AdminAiService implements Listener
                 - Investigate errors by reading logs and plugin configurations (e.g. `plugins/PluginName/config.yml`).
                 - You are in a live server environment. Plugin source code (.java files) and git repositories are NOT locally available.
                 - Do NOT attempt to read, write, or search for .java files.
-                - To update a plugin or switch to a working fork, use the Minecraft command `/update <plugin_name>` instead of manual git/maven commands.
+                - To update plugins, use the Minecraft command `/update` instead of manual git/maven commands. This command updates all plugins at once.
                 - Only use `finish` when you have completed all fixes or exhausted what you can do.
                 - If a fix is too risky or complex, note it in your finish message with "PROPOSED PLAN:" for human review.
                 """ + """
@@ -865,7 +865,7 @@ class AdminAiService implements Listener
                 """ : "") + """
 
                 Safety & Tools:
-                - Use `/update <plugin_name>` to pull and build updates for plugins instead of manual git/maven commands.
+                - Use `/update` to pull and build updates for all plugins at once instead of manual git/maven commands.
                 - Never request destructive commands.
                 """ + (isPlanning ? "" : """
                 - Use read_file before write_file for configuration files.
