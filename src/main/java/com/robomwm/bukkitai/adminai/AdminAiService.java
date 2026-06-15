@@ -803,8 +803,15 @@ class AdminAiService implements Listener
         Path resolved = resolveAllowedPath(path, false);
         if (!Files.exists(resolved))
             return "File does not exist: " + resolved;
-        Files.delete(resolved);
-        return "Deleted " + resolved;
+            
+        Path trashPath = resolved.resolveSibling(resolved.getFileName() + ".deleted." + System.currentTimeMillis());
+        Files.move(resolved, trashPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        
+        Path logFile = plugin.getDataFolder().toPath().resolve("ai-deleted-files.sh");
+        String restoreCommand = "mv \"" + trashPath.toAbsolutePath() + "\" \"" + resolved.toAbsolutePath() + "\"\n";
+        Files.writeString(logFile, restoreCommand, StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        
+        return "Safely deleted " + resolved + " (can be restored via " + logFile.getFileName() + ")";
     }
 
     private String listDirectory(String path) throws IOException
