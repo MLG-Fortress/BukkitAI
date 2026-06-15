@@ -246,6 +246,17 @@ class AdminAiService implements Listener
                 broadcastRequest(messages, proactive);
                 String response = completeWithFallback(messages);
                 AiAction action = parseAction(response);
+                if (action.action.equals("invalid_json"))
+                {
+                    plugin.getLogger().info("Invalid JSON from provider, requesting reformat in fresh context...");
+                    String reformatted = reformatJson(response);
+                    if (reformatted != null)
+                    {
+                        response = reformatted;
+                        action = parseAction(response);
+                    }
+                }
+
                 if (!"finish".equalsIgnoreCase(action.action))
                     broadcastResponse(response, proactive);
                 messages.add(new AiMessage("assistant", response));
@@ -492,6 +503,26 @@ class AdminAiService implements Listener
             case "finish" -> "RESULT finish accepted";
             default -> "RESULT error\nUnknown action. Use read_log, read_file, write_file, append_file, bash, run_command, finish.";
         };
+    }
+
+    private String reformatJson(String badJson)
+    {
+        try
+        {
+            List<AiMessage> reformatMessages = new ArrayList<>();
+            reformatMessages.add(new AiMessage("system", "You are a JSON reformatting tool. " +
+                    "The user will provide a malformed JSON object that was intended to be a Bukkit AI action. " +
+                    "Your job is to fix the JSON and return ONLY the valid JSON object with no prose."));
+            reformatMessages.add(new AiMessage("user", "Please fix this JSON response. " +
+                    "It must be exactly one JSON object with fields like 'action', 'message', 'command', etc.\n\n" +
+                    "Response to fix:\n" + badJson));
+            return completeWithFallback(reformatMessages);
+        }
+        catch (Exception e)
+        {
+            plugin.getLogger().warning("Failed to reformat JSON in fresh context: " + e.getMessage());
+            return null;
+        }
     }
 
     private String runBashCommand(String command) throws IOException, InterruptedException
@@ -752,15 +783,28 @@ class AdminAiService implements Listener
             if (firstNewline >= 0 && lastFence > firstNewline)
                 json = json.substring(firstNewline + 1, lastFence).trim();
         }
+        
         try
         {
             return gson.fromJson(json, AiAction.class);
         }
         catch (JsonSyntaxException e)
         {
+            // Try to extract JSON if it was surrounded by prose
+            int firstBrace = response.indexOf('{');
+            int lastBrace = response.lastIndexOf('}');
+            if (firstBrace >= 0 && lastBrace > firstBrace)
+            {
+                try
+                {
+                    return gson.fromJson(response.substring(firstBrace, lastBrace + 1), AiAction.class);
+                }
+                catch (JsonSyntaxException ignored) {}
+            }
+
             AiAction action = new AiAction();
-            action.action = "finish";
-            action.message = "Provider returned non-JSON response: " + truncate(response, 300);
+            action.action = "invalid_json";
+            action.message = "Your response was not valid JSON. Please provide ONLY the JSON object. Error: " + e.getMessage();
             return action;
         }
     }
