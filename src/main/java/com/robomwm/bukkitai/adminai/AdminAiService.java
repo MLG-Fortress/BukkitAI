@@ -454,7 +454,7 @@ class AdminAiService implements Listener
             boolean autoApproved = false;
             if (("run_command".equals(actionName) || "bash".equals(actionName)) && isCommandPreVetted(action.command))
                 autoApproved = true;
-            else if (("write_file".equals(actionName) || "append_file".equals(actionName)) && config.getAllowedFilePaths().contains(action.path))
+            else if (("write_file".equals(actionName) || "append_file".equals(actionName) || "delete_file".equals(actionName)) && config.getAllowedFilePaths().contains(action.path))
                 autoApproved = true;
 
             if (autoApproved)
@@ -516,13 +516,15 @@ class AdminAiService implements Listener
         {
             case "read_log" -> "RESULT read_log\n" + readAllowedFile(action.path, true, action.startLine, action.endLine);
             case "read_file" -> "RESULT read_file\n" + readAllowedFile(action.path, false, action.startLine, action.endLine);
+            case "list_dir" -> "RESULT list_dir\n" + listDirectory(action.path);
             case "write_file" -> "RESULT write_file\n" + writeAllowedFile(action.path, action.content, false);
             case "append_file" -> "RESULT append_file\n" + writeAllowedFile(action.path, action.content, true);
+            case "delete_file" -> "RESULT delete_file\n" + deleteAllowedFile(action.path);
             case "bash" -> "RESULT bash\n" + runBashCommand(action.command);
             case "run_command" -> "RESULT run_command\n" + runMinecraftCommand(action.command);
             case "finish" -> "RESULT finish accepted";
             case "invalid_json" -> "RESULT error\n" + action.message;
-            default -> "RESULT error\nUnknown action. Use read_log, read_file, write_file, append_file, bash, run_command, finish.";
+            default -> "RESULT error\nUnknown action. Use read_log, read_file, list_dir, write_file, append_file, delete_file, bash, run_command, finish.";
         };
     }
 
@@ -685,6 +687,8 @@ class AdminAiService implements Listener
         Path resolved = resolveAllowedPath(path, logOnly);
         if (!Files.exists(resolved))
             return "File does not exist: " + resolved;
+        if (Files.isDirectory(resolved))
+            return "File is a directory. Use list_dir action instead.";
         int maxBytes = config.getInt("admin-ai.max-file-bytes");
 
         if (startLine != null || endLine != null)
@@ -794,6 +798,32 @@ class AdminAiService implements Listener
         throw new IOException("Path blocked by admin-ai path policy: " + path);
     }
 
+    private String deleteAllowedFile(String path) throws IOException
+    {
+        Path resolved = resolveAllowedPath(path, false);
+        if (!Files.exists(resolved))
+            return "File does not exist: " + resolved;
+        Files.delete(resolved);
+        return "Deleted " + resolved;
+    }
+
+    private String listDirectory(String path) throws IOException
+    {
+        Path resolved = resolveAllowedPath(path, false);
+        if (!Files.exists(resolved))
+            return "Directory does not exist: " + resolved;
+        if (!Files.isDirectory(resolved))
+            return "Not a directory: " + resolved;
+            
+        try (java.util.stream.Stream<Path> stream = Files.list(resolved)) {
+            String result = stream
+                .map(p -> p.getFileName().toString() + (Files.isDirectory(p) ? "/" : ""))
+                .sorted()
+                .collect(java.util.stream.Collectors.joining("\n"));
+            return truncate(result, config.getInt("admin-ai.max-context-tokens"));
+        }
+    }
+
     private AiAction parseAction(String response)
     {
         String json = response.trim();
@@ -869,9 +899,11 @@ class AdminAiService implements Listener
                 Valid actions:
                 {"action":"read_log","path":"path/to/log","startLine":1,"endLine":100}
                 {"action":"read_file","path":"path/to/file","startLine":50,"endLine":150}
+                {"action":"list_dir","path":"path/to/directory"}
                 """ + (isPlanning ? "" : """
                 {"action":"write_file","path":"path/to/file","content":"full new file content"}
                 {"action":"append_file","path":"path/to/file","content":"content to append"}
+                {"action":"delete_file","path":"path/to/file"}
                 {"action":"run_command","command":"minecraft server command"}
                 """) + """
                 {"action":"bash","command":"allowed shell command"}
@@ -915,7 +947,7 @@ class AdminAiService implements Listener
             plugin.getServer().broadcast(ChatColor.GOLD + prefix + "Pending Action: " + actionName, "mlg.admin");
             plugin.getLogger().info(prefix + "Pending Action: " + actionName);
 
-            if ("write_file".equals(actionName)) {
+            if ("write_file".equals(actionName) || "delete_file".equals(actionName)) {
                 plugin.getServer().broadcast(ChatColor.GRAY + "Path: " + action.path, "mlg.admin");
                 plugin.getLogger().info("Path: " + action.path);
             }
@@ -950,7 +982,7 @@ class AdminAiService implements Listener
     {
         if ("run_command".equals(actionName) || "bash".equals(actionName))
             config.addAllowedCommandPrefix(action.command);
-        else if ("write_file".equals(actionName) || "append_file".equals(actionName))
+        else if ("write_file".equals(actionName) || "append_file".equals(actionName) || "delete_file".equals(actionName))
             config.addAllowedFilePath(action.path);
         logApproval(approvalSource, actionName, action, proactive, reason, "");
     }
@@ -965,6 +997,7 @@ class AdminAiService implements Listener
             {
                 case "run_command", "bash" -> " command=" + nullToEmpty(action.command);
                 case "write_file", "append_file" -> " path=" + nullToEmpty(action.path) + " content_sha256=" + sha256(nullToEmpty(action.content));
+                case "delete_file" -> " path=" + nullToEmpty(action.path);
                 default -> "";
             };
             String line = Instant.now() + " source=" + approvalSource + " proactive=" + proactive + " action=" + actionName
@@ -1029,7 +1062,7 @@ class AdminAiService implements Listener
                     ChatColor.GOLD + "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] "
                             + status + ChatColor.GRAY + " " + actionName
                             + (("run_command".equals(actionName) || "bash".equals(actionName)) ? ": " + action.command : "")
-                            + ("write_file".equals(actionName) ? ": " + action.path : ""),
+                            + (("write_file".equals(actionName) || "delete_file".equals(actionName)) ? ": " + action.path : ""),
                     "mlg.admin");
             plugin.getServer().broadcast(ChatColor.GRAY + "Reason: " + result.reason(), "mlg.admin");
         });
@@ -1037,7 +1070,7 @@ class AdminAiService implements Listener
 
     private boolean isDestructive(String actionName)
     {
-        return "write_file".equals(actionName) || "append_file".equals(actionName) || "run_command".equals(actionName) || "bash".equals(actionName);
+        return "write_file".equals(actionName) || "append_file".equals(actionName) || "delete_file".equals(actionName) || "run_command".equals(actionName) || "bash".equals(actionName);
     }
 
     private String truncate(String input, int max)
