@@ -45,13 +45,19 @@ class OpenAiCompatibleClient
             java.util.Map<String, Object> options = new java.util.HashMap<>();
             options.put("temperature", 0.1);
             options.putAll(provider.sampling());
+            if (model.toLowerCase().contains("qwen"))
+            {
+                options.put("include_reasoning", false);
+                requestBody.add("chat_template_kwargs", gson.toJsonTree(java.util.Map.of("enable_thinking", false)));
+            }
             requestBody.add("options", gson.toJsonTree(options));
         }
         else
         {
-            if (provider.endpoint().contains("arliai.com"))
+            if (provider.endpoint().contains("arliai.com") || model.toLowerCase().contains("qwen"))
             {
-                requestBody.addProperty("output_kind", "delta");
+                if (provider.endpoint().contains("arliai.com"))
+                    requestBody.addProperty("output_kind", "delta");
                 requestBody.add("chat_template_kwargs", gson.toJsonTree(java.util.Map.of("enable_thinking", false)));
             }
 
