@@ -440,7 +440,7 @@ class AdminAiService implements Listener
         ensureStillEnabled();
         String actionName = action.action == null ? "" : action.action.toLowerCase(Locale.ROOT);
 
-        if (isPlanning && ("write_file".equals(actionName) || "append_file".equals(actionName) || "run_command".equals(actionName)))
+        if (isPlanning && ("write_file".equals(actionName) || "append_file".equals(actionName) || "replace_in_file".equals(actionName) || "run_command".equals(actionName)))
         {
             return "RESULT error\nYou are in PLANNING MODE. Gather info and use `finish` to propose a plan.";
         }
@@ -454,7 +454,7 @@ class AdminAiService implements Listener
             boolean autoApproved = false;
             if (("run_command".equals(actionName) || "bash".equals(actionName)) && isCommandPreVetted(action.command))
                 autoApproved = true;
-            else if (("write_file".equals(actionName) || "append_file".equals(actionName) || "delete_file".equals(actionName)) && config.getAllowedFilePaths().contains(action.path))
+            else if (("write_file".equals(actionName) || "append_file".equals(actionName) || "replace_in_file".equals(actionName) || "delete_file".equals(actionName)) && config.getAllowedFilePaths().contains(action.path))
                 autoApproved = true;
 
             if (autoApproved)
@@ -517,14 +517,17 @@ class AdminAiService implements Listener
             case "read_log" -> "RESULT read_log\n" + readAllowedFile(action.path, true, action.startLine, action.endLine);
             case "read_file" -> "RESULT read_file\n" + readAllowedFile(action.path, false, action.startLine, action.endLine);
             case "list_dir" -> "RESULT list_dir\n" + listDirectory(action.path);
+            case "grep" -> "RESULT grep\n" + grep(action.path, action.content);
+            case "find" -> "RESULT find\n" + find(action.path, action.content);
             case "write_file" -> "RESULT write_file\n" + writeAllowedFile(action.path, action.content, false);
             case "append_file" -> "RESULT append_file\n" + writeAllowedFile(action.path, action.content, true);
+            case "replace_in_file" -> "RESULT replace_in_file\n" + replaceInFile(action.path, action.content, action.message);
             case "delete_file" -> "RESULT delete_file\n" + deleteAllowedFile(action.path);
             case "bash" -> "RESULT bash\n" + runBashCommand(action.command);
             case "run_command" -> "RESULT run_command\n" + runMinecraftCommand(action.command);
             case "finish" -> "RESULT finish accepted";
             case "invalid_json" -> "RESULT error\n" + action.message;
-            default -> "RESULT error\nUnknown action. Use read_log, read_file, list_dir, write_file, append_file, delete_file, bash, run_command, finish.";
+            default -> "RESULT error\nUnknown action. Use read_log, read_file, list_dir, grep, find, write_file, append_file, replace_in_file, delete_file, bash, run_command, finish.";
         };
     }
 
@@ -831,6 +834,93 @@ class AdminAiService implements Listener
         }
     }
 
+    private String grep(String path, String pattern) throws IOException
+    {
+        if (pattern == null || pattern.isEmpty()) return "Error: pattern is empty.";
+        Path resolved = resolveAllowedPath(path, false);
+        if (!Files.exists(resolved)) return "Path does not exist: " + resolved;
+        
+        List<String> results = new ArrayList<>();
+        java.util.regex.Pattern p;
+        try {
+            p = java.util.regex.Pattern.compile(pattern);
+        } catch (Exception e) {
+            p = java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(pattern));
+        }
+
+        final java.util.regex.Pattern finalP = p;
+        if (Files.isDirectory(resolved)) {
+            try (java.util.stream.Stream<Path> stream = Files.walk(resolved)) {
+                stream.filter(Files::isRegularFile).forEach(file -> {
+                    try {
+                        List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                        for (int i = 0; i < lines.size(); i++) {
+                            if (finalP.matcher(lines.get(i)).find()) {
+                                results.add(resolved.relativize(file) + ":" + (i+1) + ":" + lines.get(i).trim());
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                });
+            }
+        } else {
+            List<String> lines = Files.readAllLines(resolved, StandardCharsets.UTF_8);
+            for (int i = 0; i < lines.size(); i++) {
+                if (finalP.matcher(lines.get(i)).find()) {
+                    results.add((i+1) + ":" + lines.get(i).trim());
+                }
+            }
+        }
+        String output = String.join("\n", results);
+        if (output.isEmpty()) return "No matches found.";
+        return truncate(output, config.getInt("admin-ai.max-context-tokens"));
+    }
+
+    private String find(String path, String pattern) throws IOException
+    {
+        if (pattern == null || pattern.isEmpty()) return "Error: pattern is empty.";
+        Path resolved = resolveAllowedPath(path, false);
+        if (!Files.exists(resolved)) return "Path does not exist: " + resolved;
+        if (!Files.isDirectory(resolved)) return "Not a directory: " + resolved;
+
+        List<String> results = new ArrayList<>();
+        java.nio.file.PathMatcher matcher;
+        try {
+            matcher = java.nio.file.FileSystems.getDefault().getPathMatcher("glob:" + pattern);
+        } catch (Exception e) {
+            return "Invalid glob pattern: " + e.getMessage();
+        }
+        
+        try (java.util.stream.Stream<Path> stream = Files.walk(resolved)) {
+            stream.forEach(file -> {
+                if (matcher.matches(file.getFileName())) {
+                    results.add(resolved.relativize(file).toString());
+                }
+            });
+        }
+        String output = String.join("\n", results);
+        if (output.isEmpty()) return "No matches found.";
+        return truncate(output, config.getInt("admin-ai.max-context-tokens"));
+    }
+
+    private String replaceInFile(String path, String target, String replacement) throws IOException
+    {
+        if (target == null || target.isEmpty()) return "Error: target content is empty.";
+        if (replacement == null) replacement = "";
+        Path resolved = resolveAllowedPath(path, false);
+        if (!Files.exists(resolved)) return "File does not exist: " + resolved;
+        if (Files.isDirectory(resolved)) return "File is a directory.";
+
+        String content = Files.readString(resolved, StandardCharsets.UTF_8);
+        if (!content.contains(target)) return "Error: target content not found in file.";
+        
+        int count = (content.length() - content.replace(target, "").length()) / target.length();
+        if (count > 1) return "Error: target content appears " + count + " times. Provide a more specific target to ensure safe replacement.";
+
+        String newContent = content.replace(target, replacement);
+        Files.writeString(resolved, newContent, StandardCharsets.UTF_8);
+        return "Successfully replaced 1 occurrence in " + resolved.getFileName();
+    }
+
     private AiAction parseAction(String response)
     {
         String json = response.trim();
@@ -907,9 +997,12 @@ class AdminAiService implements Listener
                 {"action":"read_log","path":"path/to/log","startLine":1,"endLine":100}
                 {"action":"read_file","path":"path/to/file","startLine":50,"endLine":150}
                 {"action":"list_dir","path":"path/to/directory"}
+                {"action":"grep","path":"path/to/directory_or_file","content":"search string or regex"}
+                {"action":"find","path":"path/to/directory","content":"glob pattern"}
                 """ + (isPlanning ? "" : """
                 {"action":"write_file","path":"path/to/file","content":"full new file content"}
                 {"action":"append_file","path":"path/to/file","content":"content to append"}
+                {"action":"replace_in_file","path":"path/to/file","content":"exact target content to replace","message":"replacement content"}
                 {"action":"delete_file","path":"path/to/file"}
                 {"action":"run_command","command":"minecraft server command"}
                 """) + """
@@ -989,7 +1082,7 @@ class AdminAiService implements Listener
     {
         if ("run_command".equals(actionName) || "bash".equals(actionName))
             config.addAllowedCommandPrefix(action.command);
-        else if ("write_file".equals(actionName) || "append_file".equals(actionName) || "delete_file".equals(actionName))
+        else if ("write_file".equals(actionName) || "append_file".equals(actionName) || "replace_in_file".equals(actionName) || "delete_file".equals(actionName))
             config.addAllowedFilePath(action.path);
         logApproval(approvalSource, actionName, action, proactive, reason, "");
     }
@@ -1003,7 +1096,7 @@ class AdminAiService implements Listener
             String details = switch (actionName)
             {
                 case "run_command", "bash" -> " command=" + nullToEmpty(action.command);
-                case "write_file", "append_file" -> " path=" + nullToEmpty(action.path) + " content_sha256=" + sha256(nullToEmpty(action.content));
+                case "write_file", "append_file", "replace_in_file" -> " path=" + nullToEmpty(action.path) + " content_sha256=" + sha256(nullToEmpty(action.content));
                 case "delete_file" -> " path=" + nullToEmpty(action.path);
                 default -> "";
             };
@@ -1069,7 +1162,7 @@ class AdminAiService implements Listener
                     ChatColor.GOLD + "[Admin AI" + (proactive ? " PROACTIVE" : "") + "] "
                             + status + ChatColor.GRAY + " " + actionName
                             + (("run_command".equals(actionName) || "bash".equals(actionName)) ? ": " + action.command : "")
-                            + (("write_file".equals(actionName) || "delete_file".equals(actionName)) ? ": " + action.path : ""),
+                            + (("write_file".equals(actionName) || "delete_file".equals(actionName) || "replace_in_file".equals(actionName)) ? ": " + action.path : ""),
                     "mlg.admin");
             plugin.getServer().broadcast(ChatColor.GRAY + "Reason: " + result.reason(), "mlg.admin");
         });
@@ -1077,7 +1170,7 @@ class AdminAiService implements Listener
 
     private boolean isDestructive(String actionName)
     {
-        return "write_file".equals(actionName) || "append_file".equals(actionName) || "delete_file".equals(actionName) || "run_command".equals(actionName) || "bash".equals(actionName);
+        return "write_file".equals(actionName) || "append_file".equals(actionName) || "replace_in_file".equals(actionName) || "delete_file".equals(actionName) || "run_command".equals(actionName) || "bash".equals(actionName);
     }
 
     private String truncate(String input, int max)
