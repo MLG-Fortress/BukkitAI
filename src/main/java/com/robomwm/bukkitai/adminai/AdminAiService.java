@@ -1008,6 +1008,8 @@ class AdminAiService implements Listener
                 """) + """
                 {"action":"bash","command":"allowed shell command"}
                 {"action":"finish","message":"summary of work done, followed by notes and PROPOSED PLAN: action items if needed"}
+                
+                Escape all newlines in the JSON message field as `\\n`
                 """ + (wasCompacted ? """
 
                 Large Files & Context:
