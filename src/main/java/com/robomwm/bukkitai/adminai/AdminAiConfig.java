@@ -78,8 +78,8 @@ class AdminAiConfig
         // Repopulate with only recognized keys
         config.set("admin-ai.enabled", old.getBoolean("admin-ai.enabled", true));
         config.set("admin-ai.interactive", old.getBoolean("admin-ai.interactive", false));
-        config.set("admin-ai.max-iterations", old.getInt("admin-ai.max-iterations", 20));
-        config.set("admin-ai.autonomous-max-iterations", old.getInt("admin-ai.autonomous-max-iterations", 100));
+        config.set("admin-ai.max-iterations", old.getInt("admin-ai.max-iterations", 1000));
+        config.set("admin-ai.autonomous-max-iterations", old.getInt("admin-ai.autonomous-max-iterations", 1000));
         config.set("admin-ai.compact-threshold-messages", old.getInt("admin-ai.compact-threshold-messages", 15));
         config.set("admin-ai.proactive-interval-minutes", old.getInt("admin-ai.proactive-interval-minutes", 10));
         config.set("admin-ai.max-command-seconds", old.getInt("admin-ai.max-command-seconds", 300));
