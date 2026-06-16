@@ -207,7 +207,7 @@ class AdminAiService implements Listener
             boolean autonomous = proactive && !config.isInteractive();
             String plan = runSession(sender, userPrompt, proactive, true);
             
-            if (plan != null && autonomous && plan.contains("PROPOSED PLAN:"))
+            if (plan != null && autonomous && !plan.isBlank())
             {
                 String execPrompt = "Execute the following proposed plan:\n" + plan;
                 runSession(sender, execPrompt, proactive, false);
@@ -290,9 +290,11 @@ class AdminAiService implements Listener
                 messages.add(new AiMessage("user", result));
                 if ("finish".equalsIgnoreCase(action.action))
                 {
-                    if (isPlanning) logAiNotes(action.message);
-                    send(sender, ChatColor.GREEN + "Admin AI done: " + nullToEmpty(action.message));
-                    return action.message;
+                    String finishMessage = finishMessage(action);
+                    String plan = finishPlan(action);
+                    if (isPlanning) logAiNotes(finishMessage, plan);
+                    send(sender, ChatColor.GREEN + "Admin AI done: " + finishMessage);
+                    return plan;
                 }
             }
             send(sender, ChatColor.YELLOW + "Admin AI stopped: iteration limit reached.");
@@ -390,8 +392,8 @@ class AdminAiService implements Listener
         }
     }
 
-    private void logAiNotes(String message) {
-        if (message == null || message.isBlank())
+    private void logAiNotes(String message, String proposedPlan) {
+        if ((message == null || message.isBlank()) && (proposedPlan == null || proposedPlan.isBlank()))
             return;
         try {
             java.io.File file = new java.io.File(plugin.getDataFolder(), "ai-notes.md");
@@ -400,13 +402,12 @@ class AdminAiService implements Listener
                 file.createNewFile();
             }
             
-            String[] parts = message.split("PROPOSED PLAN:", 2);
             StringBuilder formatted = new StringBuilder();
             formatted.append("### ").append(Instant.now()).append(" UTC\n");
-            formatted.append(parts[0].trim()).append("\n");
-            if (parts.length > 1) {
+            formatted.append(nullToEmpty(message).trim()).append("\n");
+            if (proposedPlan != null && !proposedPlan.isBlank()) {
                 formatted.append("\n**Proposed Actions:**\n");
-                formatted.append(parts[1].trim()).append("\n");
+                formatted.append(proposedPlan.trim()).append("\n");
             }
             formatted.append("---\n\n");
             
@@ -549,6 +550,16 @@ class AdminAiService implements Listener
             plugin.getLogger().warning("Failed to reformat JSON in fresh context: " + e.getMessage());
             return null;
         }
+    }
+
+    private String finishMessage(AiAction action)
+    {
+        return nullToEmpty(action.message).trim();
+    }
+
+    private String finishPlan(AiAction action)
+    {
+        return nullToEmpty(action.proposedPlan).trim();
     }
 
     private String runBashCommand(String command) throws IOException, InterruptedException
@@ -968,14 +979,13 @@ class AdminAiService implements Listener
         boolean autonomous = !config.isInteractive();
         String modeText = isPlanning ? """
                 You are in PLANNING MODE. Investigate issues and propose a plan.
-                When you understand the issues, use `finish` with your notes and "PROPOSED PLAN:" detailing the fix.
+                When you understand the issues, use `finish` with your notes in `message` and action items in `proposedPlan`.
                 """ : (autonomous ? """
                 You are in EXECUTION MODE (Autonomous). You must execute the provided plan to fix issues.
                 - Apply fixes directly using write_file or run_command.
                 - After executing the plan, use `finish`.
                 """ : """
-                If a task is too big and there are no suitable forks, propose a plan in your `finish` action's message.
-                Use the separator "PROPOSED PLAN:" if you have specific actions to recommend after your summary notes.
+                If a task is too big and there are no suitable forks, propose action items in your `finish` action's `proposedPlan` field.
                 """);
 
         return """
@@ -989,7 +999,7 @@ class AdminAiService implements Listener
                 - Do NOT attempt to read, write, or search for .java files.
                 - To update plugins, use the Minecraft command `/update` instead of manual git/maven commands. This command updates all plugins at once.
                 - Only use `finish` when you have completed all fixes or exhausted what you can do.
-                - If a fix is too risky or complex, note it in your finish message with "PROPOSED PLAN:" for human review.
+                - If a fix is too risky or complex, note it in your finish `proposedPlan` field for human review.
                 """ + """
 
                 You must respond with exactly one JSON object and no prose.
@@ -1007,9 +1017,10 @@ class AdminAiService implements Listener
                 {"action":"run_command","command":"minecraft server command"}
                 """) + """
                 {"action":"bash","command":"allowed shell command"}
-                {"action":"finish","message":"summary of work done, followed by notes and PROPOSED PLAN: action items if needed"}
-                
+                {"action":"finish","message":"summary of work done, followed by notes.", "proposedPlan": "optional: plan items if needed"}
+
                 Escape all newlines in the JSON message field as `\\n`
+                For finish actions, use only 'action', 'message', and optionally 'proposedPlan' fields.
                 """ + (wasCompacted ? """
 
                 Large Files & Context:
