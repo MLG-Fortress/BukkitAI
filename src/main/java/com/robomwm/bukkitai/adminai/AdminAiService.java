@@ -1035,19 +1035,43 @@ class AdminAiService implements Listener
     private AiAction parseAction(String response)
     {
         String json = response.trim();
-        if (json.startsWith("```"))
+        
+        // Strip markdown code blocks if present
+        if (json.contains("```"))
         {
-            int firstNewline = json.indexOf('\n');
+            int firstFence = json.indexOf("```");
+            int firstNewline = json.indexOf('\n', firstFence);
             int lastFence = json.lastIndexOf("```");
             if (firstNewline >= 0 && lastFence > firstNewline)
                 json = json.substring(firstNewline + 1, lastFence).trim();
+            else if (firstFence >= 0 && lastFence > firstFence)
+                json = json.substring(firstFence + 3, lastFence).trim();
+        }
+
+        // Heal truncated JSON (missing closing braces)
+        if (json.startsWith("{") && !json.endsWith("}"))
+        {
+            int openBraces = 0;
+            int closeBraces = 0;
+            for (char c : json.toCharArray())
+            {
+                if (c == '{') openBraces++;
+                else if (c == '}') closeBraces++;
+            }
+            if (openBraces > closeBraces)
+            {
+                StringBuilder sb = new StringBuilder(json);
+                for (int i = 0; i < openBraces - closeBraces; i++)
+                    sb.append("}");
+                json = sb.toString();
+            }
         }
         
         try
         {
-            return gson.fromJson(json, AiAction.class);
+            return parseWithGson(json);
         }
-        catch (JsonSyntaxException e)
+        catch (Exception e)
         {
             // Try to extract JSON if it was surrounded by prose
             int firstBrace = response.indexOf('{');
@@ -1056,9 +1080,9 @@ class AdminAiService implements Listener
             {
                 try
                 {
-                    return gson.fromJson(response.substring(firstBrace, lastBrace + 1), AiAction.class);
+                    return parseWithGson(response.substring(firstBrace, lastBrace + 1));
                 }
-                catch (JsonSyntaxException ignored) {}
+                catch (Exception ignored) {}
             }
 
             AiAction action = new AiAction();
@@ -1066,6 +1090,33 @@ class AdminAiService implements Listener
             action.message = "Your response was not valid JSON. Please provide ONLY the JSON object. Error: " + e.getMessage();
             return action;
         }
+    }
+
+    private AiAction parseWithGson(String json)
+    {
+        com.google.gson.JsonElement element = com.google.gson.JsonParser.parseString(json);
+        if (!element.isJsonObject())
+            throw new com.google.gson.JsonSyntaxException("Not a JSON object");
+
+        com.google.gson.JsonObject obj = element.getAsJsonObject();
+        
+        // Handle proposedPlan as array if AI sends it that way
+        if (obj.has("proposedPlan") && obj.get("proposedPlan").isJsonArray())
+        {
+            com.google.gson.JsonArray array = obj.getAsJsonArray("proposedPlan");
+            StringBuilder sb = new StringBuilder();
+            for (com.google.gson.JsonElement item : array)
+            {
+                if (item.isJsonPrimitive())
+                {
+                    if (sb.length() > 0) sb.append("\n");
+                    sb.append("- ").append(item.getAsString());
+                }
+            }
+            obj.addProperty("proposedPlan", sb.toString());
+        }
+
+        return gson.fromJson(obj, AiAction.class);
     }
 
     private String buildInitialPrompt(String userPrompt)
@@ -1117,11 +1168,12 @@ class AdminAiService implements Listener
                 {"action":"run_command","command":"minecraft server command"}
                 """) + """
                 {"action":"bash","command":"allowed shell command"}
-                {"action":"finish","message":"summary of work done, followed by notes.", "proposedPlan": "optional: plan items if needed"}
+                {"action":"finish","message":"summary of work done, followed by notes.", "proposedPlan": "optional: plan items if needed (string or array of strings)"}
 
-                Escape all newlines in the JSON message field as `\\n`
+                Escape all newlines in JSON string fields as `\\n`.
+                Avoid repetitive words or patterns in search queries; keep them concise.
                 For finish actions, use only 'action', 'message', and optionally 'proposedPlan' fields.
-                On every non-finish action, also include a `"progress"` field: 1-2 terse sentences stating what you are doing and why (e.g. "Checking War plugin config for the maxzones error. Located war.yml, reading it next."). This is preserved when history is compacted so you don't lose track or repeat work.
+                On every non-finish action, also include a `"progress"` field: 1-2 terse sentences stating what you are doing and why.
                 """ + (wasCompacted ? """
 
                 Large Files & Context:
