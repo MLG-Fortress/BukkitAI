@@ -8,6 +8,7 @@ class AiAction
     String content;
     String message;
     String proposedPlan;
+    String progress;
     Integer startLine;
     Integer endLine;
 }

@@ -346,7 +346,27 @@ class AdminAiService implements Listener
 
         // Keep the last 4 messages (2 interactions)
         int keepStart = Math.max(2, messages.size() - 4);
-        
+
+        // Preserve the trail of what the agent has already tried by harvesting the
+        // terse `progress` notes from the assistant turns we're about to drop.
+        StringBuilder breadcrumbs = new StringBuilder();
+        for (int i = 2; i < keepStart; i++)
+        {
+            AiMessage msg = messages.get(i);
+            if (!"assistant".equals(msg.role()))
+                continue;
+            try
+            {
+                AiAction dropped = gson.fromJson(msg.content(), AiAction.class);
+                if (dropped != null && dropped.progress != null && !dropped.progress.isBlank())
+                    breadcrumbs.append("- ").append(dropped.progress.trim()).append("\n");
+            }
+            catch (Exception ignored) {}
+        }
+        if (breadcrumbs.length() > 0)
+            kept.add(new AiMessage("user", "PROGRESS SO FAR (summary of compacted earlier steps):\n"
+                    + truncate(breadcrumbs.toString(), 2000)));
+
         for (int i = keepStart; i < messages.size(); i++)
         {
             AiMessage msg = messages.get(i);
@@ -700,7 +720,7 @@ class AdminAiService implements Listener
     {
         Path resolved = resolveAllowedPath(path, logOnly);
         if (!Files.exists(resolved))
-            return "File does not exist: " + resolved;
+            return "File does not exist: " + resolved + nearestDirectoryListing(resolved);
         if (Files.isDirectory(resolved))
             return "File is a directory. Use list_dir action instead.";
         int maxBytes = config.getInt("admin-ai.max-file-bytes");
@@ -826,6 +846,46 @@ class AdminAiService implements Listener
         Files.writeString(logFile, restoreCommand, StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         
         return "Safely deleted " + resolved + " (can be restored via " + logFile.getFileName() + ")";
+    }
+
+    /**
+     * Walks up from a missing path to the nearest existing, policy-allowed directory and
+     * returns its contents. Lets the AI self-correct a wrong path in one turn instead of
+     * blindly guessing filenames (which previously caused read_file retry loops).
+     */
+    private String nearestDirectoryListing(Path missing)
+    {
+        Path dir = missing.getParent();
+        while (dir != null && !Files.isDirectory(dir))
+            dir = dir.getParent();
+        if (dir == null)
+            return "";
+
+        Path normalized = dir.toAbsolutePath().normalize();
+        boolean allowed = false;
+        for (java.io.File root : config.getSourceRoots())
+            if (normalized.startsWith(root.toPath().toAbsolutePath().normalize()))
+            {
+                allowed = true;
+                break;
+            }
+        if (!allowed)
+            return "";
+
+        try (java.util.stream.Stream<Path> stream = Files.list(dir))
+        {
+            String listing = stream
+                    .map(p -> p.getFileName().toString() + (Files.isDirectory(p) ? "/" : ""))
+                    .sorted()
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            if (listing.isEmpty())
+                return "";
+            return "\nContents of nearest existing directory (" + normalized + "):\n" + truncate(listing, 4000);
+        }
+        catch (IOException e)
+        {
+            return "";
+        }
     }
 
     private String listDirectory(String path) throws IOException
@@ -1021,6 +1081,7 @@ class AdminAiService implements Listener
 
                 Escape all newlines in the JSON message field as `\\n`
                 For finish actions, use only 'action', 'message', and optionally 'proposedPlan' fields.
+                On every non-finish action, also include a `"progress"` field: 1-2 terse sentences stating what you are doing and why (e.g. "Checking War plugin config for the maxzones error. Located war.yml, reading it next."). This is preserved when history is compacted so you don't lose track or repeat work.
                 """ + (wasCompacted ? """
 
                 Large Files & Context:
