@@ -27,8 +27,6 @@ import java.util.List;
 import java.util.Locale;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -50,7 +48,6 @@ class AdminAiService implements Listener
     private final ApprovalAiClient approvalClient;
     private final java.util.Queue<String> exceptionQueue = new ConcurrentLinkedQueue<>();
     private boolean wasCompacted = false;
-    private final Map<String, Integer> actionCounts = new HashMap<>();
 
     AdminAiService(BukkitAI plugin)
     {
@@ -243,7 +240,6 @@ class AdminAiService implements Listener
     {
         try
         {
-            actionCounts.clear();
             boolean autonomous = proactive && !config.isInteractive();
             int maxIterations = autonomous
                     ? config.getInt("admin-ai.autonomous-max-iterations")
@@ -278,17 +274,6 @@ class AdminAiService implements Listener
                 if (!"finish".equalsIgnoreCase(action.action))
                     broadcastResponse(response, proactive);
                 messages.add(new AiMessage("assistant", response));
-
-                // Loop Detection: Check if the AI is repeating the same failing action
-                String fingerprint = action.fingerprint();
-                int count = actionCounts.merge(fingerprint, 1, Integer::sum);
-                if (count >= 3)
-                {
-                    messages.add(new AiMessage("user", "SYSTEM WARNING: You have attempted this exact action " + count + " times. " +
-                            "It is not working. You MUST change your approach (e.g. check different logs, list directories to verify paths) " +
-                            "or use `finish` if you are stuck. Do NOT repeat this action again."));
-                    continue;
-                }
 
                 String result;
                 try
@@ -923,8 +908,6 @@ class AdminAiService implements Listener
     private String grep(String path, String pattern) throws IOException
     {
         if (pattern == null || pattern.isEmpty()) return "Error: pattern is empty.";
-        if (pattern.length() > 500) return "Error: search pattern too complex/long. Simplify your regex.";
-
         Path resolved = resolveAllowedPath(path, false);
         if (!Files.exists(resolved)) return "Path does not exist: " + resolved;
         
@@ -937,49 +920,29 @@ class AdminAiService implements Listener
         }
 
         final java.util.regex.Pattern finalP = p;
-        int maxFiles = 100;
-        int maxResults = 200;
-        int[] filesProcessed = {0};
-
         if (Files.isDirectory(resolved)) {
             try (java.util.stream.Stream<Path> stream = Files.walk(resolved)) {
-                stream.filter(Files::isRegularFile)
-                      .limit(maxFiles * 5) // Loose limit on walk depth
-                      .forEach(file -> {
-                    if (filesProcessed[0] >= maxFiles || results.size() >= maxResults) return;
-                    filesProcessed[0]++;
-                    
-                    try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-                        String line;
-                        int lineNum = 0;
-                        while ((line = reader.readLine()) != null) {
-                            lineNum++;
-                            if (finalP.matcher(line).find()) {
-                                results.add(resolved.relativize(file) + ":" + lineNum + ":" + line.trim());
-                                if (results.size() >= maxResults) break;
+                stream.filter(Files::isRegularFile).forEach(file -> {
+                    try {
+                        List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                        for (int i = 0; i < lines.size(); i++) {
+                            if (finalP.matcher(lines.get(i)).find()) {
+                                results.add(resolved.relativize(file) + ":" + (i+1) + ":" + lines.get(i).trim());
                             }
-                            if (lineNum > 10000) break; // Don't grep huge files line-by-line
                         }
                     } catch (Exception ignored) {}
                 });
             }
         } else {
-            try (BufferedReader reader = Files.newBufferedReader(resolved, StandardCharsets.UTF_8)) {
-                String line;
-                int lineNum = 0;
-                while ((line = reader.readLine()) != null) {
-                    lineNum++;
-                    if (finalP.matcher(line).find()) {
-                        results.add(lineNum + ":" + line.trim());
-                        if (results.size() >= maxResults) break;
-                    }
-                    if (lineNum > 50000) break;
+            List<String> lines = Files.readAllLines(resolved, StandardCharsets.UTF_8);
+            for (int i = 0; i < lines.size(); i++) {
+                if (finalP.matcher(lines.get(i)).find()) {
+                    results.add((i+1) + ":" + lines.get(i).trim());
                 }
             }
         }
         String output = String.join("\n", results);
         if (output.isEmpty()) return "No matches found.";
-        if (results.size() >= maxResults) output += "\n... (result limit reached) ...";
         return truncate(output, config.getInt("admin-ai.max-context-tokens"));
     }
 
@@ -998,10 +961,8 @@ class AdminAiService implements Listener
             return "Invalid glob pattern: " + e.getMessage();
         }
         
-        int maxResults = 500;
         try (java.util.stream.Stream<Path> stream = Files.walk(resolved)) {
-            stream.limit(5000).forEach(file -> {
-                if (results.size() >= maxResults) return;
+            stream.forEach(file -> {
                 if (matcher.matches(file.getFileName())) {
                     results.add(resolved.relativize(file).toString());
                 }
@@ -1009,7 +970,6 @@ class AdminAiService implements Listener
         }
         String output = String.join("\n", results);
         if (output.isEmpty()) return "No matches found.";
-        if (results.size() >= maxResults) output += "\n... (result limit reached) ...";
         return truncate(output, config.getInt("admin-ai.max-context-tokens"));
     }
 
