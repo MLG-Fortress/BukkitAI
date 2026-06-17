@@ -17,17 +17,6 @@ import java.util.logging.Logger;
 
 class OpenAiCompatibleClient
 {
-    /** Hard cap on a single response. The model's output is just a small JSON action, so this is generous. */
-    private static final int MAX_RESPONSE_CHARS = 262_144;
-    /** Run the repetition check once per this many appended chars (cheap amortization). */
-    private static final int LOOP_CHECK_INTERVAL = 512;
-
-    /** Thrown internally to break out of the streaming forEach when a runaway is detected. */
-    private static final class StreamAbort extends RuntimeException
-    {
-        StreamAbort(String message) { super(message); }
-    }
-
     private final Logger logger;
     private final Gson gson = new Gson();
     private final Gson prettyGson = new GsonBuilder().setPrettyPrinting().create();
@@ -105,56 +94,37 @@ class OpenAiCompatibleClient
 
         StringBuilder fullResponse = new StringBuilder();
         StringBuilder lineBuffer = new StringBuilder();
-        int[] lastLoopCheck = {0};
 
-        try {
-            response.body().forEach(line -> {
-                if (line.isEmpty() || line.startsWith(":")) return;
-                String jsonStr = line;
-                if (line.startsWith("data: ")) {
-                    jsonStr = line.substring(6).trim();
-                    if (jsonStr.equals("[DONE]")) return;
-                }
+        response.body().forEach(line -> {
+            if (line.isEmpty() || line.startsWith(":")) return;
+            String jsonStr = line;
+            if (line.startsWith("data: ")) {
+                jsonStr = line.substring(6).trim();
+                if (jsonStr.equals("[DONE]")) return;
+            }
 
-                try {
-                    JsonObject json = JsonParser.parseString(jsonStr).getAsJsonObject();
-                    String content = extractContent(json);
-                    if (content != null && !content.isEmpty()) {
-                        fullResponse.append(content);
+            try {
+                JsonObject json = JsonParser.parseString(jsonStr).getAsJsonObject();
+                String content = extractContent(json);
+                if (content != null && !content.isEmpty()) {
+                    fullResponse.append(content);
 
-                        // Abort runaway generation. Protects every protocol,
-                        // including ones (e.g. OpenAI-compatible) that have no
-                        // server-side output cap.
-                        if (fullResponse.length() > MAX_RESPONSE_CHARS)
-                            throw new StreamAbort("exceeded " + MAX_RESPONSE_CHARS + " chars");
-                        if (fullResponse.length() - lastLoopCheck[0] >= LOOP_CHECK_INTERVAL) {
-                            lastLoopCheck[0] = fullResponse.length();
-                            if (isRepetitiveTail(fullResponse))
-                                throw new StreamAbort("detected repetition loop");
-                        }
-
-                        lineBuffer.append(content);
-                        int newlineIdx;
-                        while ((newlineIdx = lineBuffer.indexOf("\n")) >= 0) {
-                            String completeLine = lineBuffer.substring(0, newlineIdx);
-                            logger.info("[AI Stream] " + completeLine);
-                            lineBuffer.delete(0, newlineIdx + 1);
-                        }
-                        if (lineBuffer.length() > 80) {
-                            logger.info("[AI Stream] " + lineBuffer.toString());
-                            lineBuffer.setLength(0);
-                        }
+                    lineBuffer.append(content);
+                    int newlineIdx;
+                    while ((newlineIdx = lineBuffer.indexOf("\n")) >= 0) {
+                        String completeLine = lineBuffer.substring(0, newlineIdx);
+                        logger.info("[AI Stream] " + completeLine);
+                        lineBuffer.delete(0, newlineIdx + 1);
                     }
-                } catch (StreamAbort abort) {
-                    throw abort;
-                } catch (Exception e) {
-                    logger.warning("Failed to parse AI stream chunk: " + line + ". Error: " + e.getMessage());
+                    if (lineBuffer.length() > 80) {
+                        logger.info("[AI Stream] " + lineBuffer.toString());
+                        lineBuffer.setLength(0);
+                    }
                 }
-            });
-        } catch (StreamAbort abort) {
-            logger.warning("[AI Stream] Aborted runaway response from " + provider.name() + ": " + abort.getMessage()
-                    + " (kept " + fullResponse.length() + " chars).");
-        }
+            } catch (Exception e) {
+                logger.warning("Failed to parse AI stream chunk: " + line + ". Error: " + e.getMessage());
+            }
+        });
 
         if (lineBuffer.length() > 0) {
             logger.info("[AI Stream] " + lineBuffer.toString());
@@ -204,38 +174,5 @@ class OpenAiCompatibleClient
         if (json.has("text"))
             return json.get("text").getAsString();
         return null;
-    }
-
-    /**
-     * Detects a short-period repetition at the tail of the response — the classic
-     * small-model loop (e.g. "Error|Exception|Error|Exception..." or a repeated
-     * line). Catches the failure mode that Ollama's weak repeat_penalty does not,
-     * and works regardless of provider since it inspects emitted text directly.
-     */
-    private boolean isRepetitiveTail(StringBuilder sb)
-    {
-        int len = sb.length();
-        int window = Math.min(len, 2048);
-        if (window < 128) return false;
-
-        // Try each period; require enough consecutive repeats to avoid false positives.
-        for (int period = 1; period <= 64; period++)
-        {
-            int repeats = 8;
-            int checkLen = period * repeats;
-            if (window < checkLen) continue;
-
-            boolean periodic = true;
-            for (int i = 0; i < checkLen; i++)
-            {
-                if (sb.charAt(len - 1 - i) != sb.charAt(len - 1 - i - period))
-                {
-                    periodic = false;
-                    break;
-                }
-            }
-            if (periodic) return true;
-        }
-        return false;
     }
 }
