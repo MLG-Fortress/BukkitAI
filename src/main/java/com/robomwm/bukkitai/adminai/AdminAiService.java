@@ -34,6 +34,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 class AdminAiService implements Listener
 {
@@ -42,6 +43,7 @@ class AdminAiService implements Listener
     private final OpenAiCompatibleClient client;
     private final Gson gson = new Gson();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ReentrantLock taskLock = new ReentrantLock();
     private final AtomicReference<Process> currentProcess = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<Boolean>> approvalFuture = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<?>> currentTask = new AtomicReference<>();
@@ -157,22 +159,42 @@ class AdminAiService implements Listener
                 sender.sendMessage(ChatColor.RED + "Admin AI is disabled. Use /adminai on first.");
             return;
         }
-        if (isRunning())
+
+        if (!taskLock.tryLock())
         {
             if (!proactive)
                 sender.sendMessage(ChatColor.RED + "Admin AI task already running.");
             return;
         }
+
         if (config.getProviders().isEmpty())
         {
+            taskLock.unlock();
             if (!proactive)
                 sender.sendMessage(ChatColor.RED + "No enabled admin-ai providers in config.yml.");
             return;
         }
 
-        currentTask.set(CompletableFuture.runAsync(() -> runAgent(sender, prompt, proactive), executor));
-        if (!proactive)
-            sender.sendMessage(ChatColor.GREEN + "Admin AI task started.");
+        try
+        {
+            currentTask.set(CompletableFuture.runAsync(() -> {
+                try
+                {
+                    runAgent(sender, prompt, proactive);
+                }
+                finally
+                {
+                    taskLock.unlock();
+                }
+            }, executor));
+            if (!proactive)
+                sender.sendMessage(ChatColor.GREEN + "Admin AI task started.");
+        }
+        catch (Exception e)
+        {
+            taskLock.unlock();
+            throw e;
+        }
     }
 
     void abortCurrentTask()
@@ -196,8 +218,7 @@ class AdminAiService implements Listener
 
     private boolean isRunning()
     {
-        CompletableFuture<?> task = currentTask.get();
-        return task != null && !task.isDone();
+        return taskLock.isLocked();
     }
 
     private void runAgent(CommandSender sender, String userPrompt, boolean proactive)
@@ -327,21 +348,19 @@ class AdminAiService implements Listener
     {
         if (messages.size() <= 6) return false;
 
-        boolean changed = false;
-        List<AiMessage> kept = new ArrayList<>();
+        List<AiMessage> rawKept = new ArrayList<>();
         
         // Always keep original system message and initial task
-        kept.add(messages.get(0)); // system
-        kept.add(messages.get(1)); // initial task
-        
+        AiMessage first = messages.get(0);
         String notice = "\n\nNOTICE: Previous conversation history has been compacted. " +
                 "Older messages were removed. You can re-read specific parts of files using 'startLine' and 'endLine' if needed.";
-        AiMessage first = messages.get(0);
         if (!first.content().contains("NOTICE: Previous conversation history has been compacted")) {
-            kept.set(0, new AiMessage(first.role(), first.content() + notice));
+            rawKept.add(new AiMessage(first.role(), first.content() + notice));
         } else {
-            kept.set(0, first);
+            rawKept.add(first);
         }
+        
+        rawKept.add(messages.get(1)); // initial task
         wasCompacted = true;
 
         // Keep the last 4 messages (2 interactions)
@@ -364,7 +383,7 @@ class AdminAiService implements Listener
             catch (Exception ignored) {}
         }
         if (breadcrumbs.length() > 0)
-            kept.add(new AiMessage("user", "PROGRESS SO FAR (summary of compacted earlier steps):\n"
+            rawKept.add(new AiMessage("user", "PROGRESS SO FAR (summary of compacted earlier steps):\n"
                     + truncate(breadcrumbs.toString(), 2000)));
 
         for (int i = keepStart; i < messages.size(); i++)
@@ -372,23 +391,43 @@ class AdminAiService implements Listener
             AiMessage msg = messages.get(i);
             if (msg.content().length() > 2000)
             {
-                kept.add(new AiMessage(msg.role(), "[Result truncated to fit context window.]\n" + truncateMiddle(msg.content(), 2000)));
+                rawKept.add(new AiMessage(msg.role(), "[Result truncated to fit context window.]\n" + truncateMiddle(msg.content(), 2000)));
             }
             else
             {
-                kept.add(msg);
+                rawKept.add(msg);
             }
         }
 
-        if (kept.size() < messages.size()) changed = true;
-
-        if (changed)
+        // Merge consecutive messages with the same role (strict backends requirement)
+        List<AiMessage> merged = new ArrayList<>();
+        if (!rawKept.isEmpty())
         {
-            messages.clear();
-            messages.addAll(kept);
+            AiMessage current = rawKept.get(0);
+            for (int i = 1; i < rawKept.size(); i++)
+            {
+                AiMessage next = rawKept.get(i);
+                if (current.role().equals(next.role()))
+                {
+                    current = new AiMessage(current.role(), current.content() + "\n\n" + next.content());
+                }
+                else
+                {
+                    merged.add(current);
+                    current = next;
+                }
+            }
+            merged.add(current);
         }
 
-        return changed;
+        if (merged.size() < messages.size())
+        {
+            messages.clear();
+            messages.addAll(merged);
+            return true;
+        }
+
+        return false;
     }
 
     private void bootstrapWithInitialLogRead(List<AiMessage> messages) throws IOException, InterruptedException
@@ -634,23 +673,24 @@ class AdminAiService implements Listener
                                         for (String s : (String[]) arg) output.append(s).append("\n");
                                     } else if (arg != null) {
                                         // Attempt to handle Adventure Components or other message types via reflection
+                                        boolean handled = false;
                                         try {
                                             if (arg.getClass().getName().contains("Component")) {
-                                                // Simplified: use a well-known method if it exists, or just toString
-                                                // In Paper/Adventure, many components have a plainText() or similar if serialized
-                                                // But since we can't easily serialize without more reflection, we'll try to find a "content" or "text" or just use toString
-                                                // Most Components in Adventure have a very verbose toString, but it's better than nothing.
-                                                // Actually, let's try to use the PlainTextComponentSerializer if we can find it.
                                                 try {
                                                     Class<?> serializerClass = Class.forName("net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer");
                                                     Object serializer = serializerClass.getMethod("plainText").invoke(null);
+                                                    // Most Components implement Component directly as their first interface.
+                                                    // This is a bit brittle but we'll try it, and fallback to toString if it fails.
                                                     String text = (String) serializerClass.getMethod("serialize", arg.getClass().getInterfaces()[0]).invoke(serializer, arg);
                                                     output.append(text).append("\n");
-                                                } catch (Exception e) {
-                                                    output.append(arg).append("\n");
-                                                }
+                                                    handled = true;
+                                                } catch (Exception ignored) {}
                                             }
                                         } catch (Exception ignored) {}
+
+                                        if (!handled) {
+                                            output.append(arg.toString()).append("\n");
+                                        }
                                     }
                                 }
                             }
