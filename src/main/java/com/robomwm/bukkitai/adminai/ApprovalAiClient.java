@@ -35,13 +35,13 @@ class ApprovalAiClient
      * @param action          the pending action
      * @param conversationLog recent conversation context (last few messages)
      * @param proactive       whether this is a proactive (automated) task
-     * @param isPlanning      whether the agent is in planning mode
+     * @param mode            the agent's task mode
      * @return result with approved/denied and reasoning
      */
-    ApprovalResult evaluate(AiAction action, List<AiMessage> conversationLog, boolean proactive, boolean isPlanning)
+    ApprovalResult evaluate(AiAction action, List<AiMessage> conversationLog, boolean proactive, AdminAiService.TaskMode mode)
     {
         String actionName = action.action == null ? "unknown" : action.action;
-        String prompt = buildApprovalPrompt(action, conversationLog, proactive, isPlanning);
+        String prompt = buildApprovalPrompt(action, conversationLog, proactive, mode);
 
         List<AiMessage> messages = List.of(
                 new AiMessage("system", approvalSystemPrompt()),
@@ -109,11 +109,11 @@ class ApprovalAiClient
         }
     }
 
-    private String buildApprovalPrompt(AiAction action, List<AiMessage> conversationLog, boolean proactive, boolean isPlanning)
+    private String buildApprovalPrompt(AiAction action, List<AiMessage> conversationLog, boolean proactive, AdminAiService.TaskMode mode)
     {
         StringBuilder sb = new StringBuilder();
         sb.append("## Pending Action Review\n\n");
-        sb.append("**Mode:** ").append(isPlanning ? "PLANNING" : "EXECUTION").append('\n');
+        sb.append("**Mode:** ").append(mode).append('\n');
         sb.append("**Task type:** ").append(proactive ? "PROACTIVE (automated)" : "MANUAL (admin-initiated)").append('\n');
         sb.append("**Action:** ").append(action.action).append('\n');
 
@@ -159,7 +159,7 @@ class ApprovalAiClient
                 SECURITY GUIDELINES:
                 1. READ-ONLY: Commands that only read state (e.g. searching, listing) are generally SAFE.
                 2. STATE-CHANGING: Scrutinize actions that modify files or system state. They must align with the agent's goal.
-                3. PLANNING MODE: When in planning mode, the agent should only be performing information-gathering actions.
+                3. PLANNING/DIAGNOSTIC MODE: In these modes, the agent should mostly be performing information-gathering actions.
                 4. DENIED SUBSTRINGS: NEVER approve actions containing denied substrings provided in the prompt.
                 5. SOURCE ROOTS: File paths must be within allowed source roots.
 

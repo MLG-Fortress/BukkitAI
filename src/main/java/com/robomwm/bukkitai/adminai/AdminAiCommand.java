@@ -16,7 +16,7 @@ public class AdminAiCommand implements CommandExecutor, TabCompleter
 {
     private static final List<String> SUBCOMMANDS = List.of(
             "on", "off", "status", "reload", "abort", "run", "approve", "deny",
-            "interactive", "autonomous", "check");
+            "interactive", "autonomous", "check", "diagnose");
     private static final List<String> ON_OFF = List.of("on", "off");
 
     private final AdminAiService adminAiService;
@@ -96,8 +96,13 @@ public class AdminAiCommand implements CommandExecutor, TabCompleter
                     return false;
                 adminAiService.run(sender, String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
                 return true;
+            case "diagnose":
+                if (args.length < 2)
+                    return false;
+                adminAiService.run(sender, String.join(" ", Arrays.copyOfRange(args, 1, args.length)), false, AdminAiService.TaskMode.DIAGNOSTIC);
+                return true;
             case "check":
-                adminAiService.run(sender, "Perform a maintenance check.", true);
+                adminAiService.run(sender, "Perform a maintenance check.", true, AdminAiService.TaskMode.PLANNING);
                 sender.sendMessage(ChatColor.GREEN + "Proactive maintenance check triggered.");
                 return true;
             default:

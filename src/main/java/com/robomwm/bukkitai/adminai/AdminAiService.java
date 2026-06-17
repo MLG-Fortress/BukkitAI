@@ -38,6 +38,12 @@ import java.util.concurrent.locks.ReentrantLock;
 
 class AdminAiService implements Listener
 {
+    public enum TaskMode {
+        PLANNING,
+        EXECUTION,
+        DIAGNOSTIC
+    }
+
     private final BukkitAI plugin;
     private final AdminAiConfig config;
     private final OpenAiCompatibleClient client;
@@ -47,6 +53,9 @@ class AdminAiService implements Listener
     private final AtomicReference<Process> currentProcess = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<Boolean>> approvalFuture = new AtomicReference<>();
     private final AtomicReference<CompletableFuture<?>> currentTask = new AtomicReference<>();
+    private final AtomicReference<Path> currentDiagnosticFile = new AtomicReference<>();
+    private final java.util.Map<String, List<String>> currentDiagnosticSections = new java.util.LinkedHashMap<>();
+    private String currentDiagnosticHeader = "";
     private final ApprovalAiClient approvalClient;
     private final java.util.Queue<String> exceptionQueue = new ConcurrentLinkedQueue<>();
     private boolean wasCompacted = false;
@@ -65,7 +74,7 @@ class AdminAiService implements Listener
     {
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
             if (config.isEnabled())
-                run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true);
+                run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true, config.getProactiveMode());
         }, 100L); // 5 seconds after startup
 
         // Recurring proactive maintenance
@@ -74,7 +83,7 @@ class AdminAiService implements Listener
         {
             plugin.getServer().getScheduler().runTaskTimer(plugin, () -> {
                 if (config.isEnabled() && !isRunning())
-                    run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true);
+                    run(plugin.getServer().getConsoleSender(), "Perform a routine maintenance check. Look for errors in the logs and ensure all plugins are up to date.", true, config.getProactiveMode());
             }, intervalTicks, intervalTicks);
         }
 
@@ -102,7 +111,7 @@ class AdminAiService implements Listener
 
         String prompt = "The server encountered the following exceptions recently. Investigate logs for stacktraces and suggest/apply fixes or propose a plan:\n"
                 + String.join("\n", uniqueExceptions);
-        run(plugin.getServer().getConsoleSender(), prompt, true);
+        run(plugin.getServer().getConsoleSender(), prompt, true, config.getProactiveMode());
     }
 
     @EventHandler
@@ -148,10 +157,10 @@ class AdminAiService implements Listener
 
     void run(CommandSender sender, String prompt)
     {
-        run(sender, prompt, false);
+        run(sender, prompt, false, TaskMode.PLANNING);
     }
 
-    void run(CommandSender sender, String prompt, boolean proactive)
+    void run(CommandSender sender, String prompt, boolean proactive, TaskMode mode)
     {
         if (!config.isEnabled())
         {
@@ -180,7 +189,7 @@ class AdminAiService implements Listener
             currentTask.set(CompletableFuture.runAsync(() -> {
                 try
                 {
-                    runAgent(sender, prompt, proactive);
+                    runAgent(sender, prompt, proactive, mode);
                 }
                 finally
                 {
@@ -221,17 +230,17 @@ class AdminAiService implements Listener
         return taskLock.isLocked();
     }
 
-    private void runAgent(CommandSender sender, String userPrompt, boolean proactive)
+    private void runAgent(CommandSender sender, String userPrompt, boolean proactive, TaskMode mode)
     {
         try
         {
             boolean autonomous = proactive && !config.isInteractive();
-            String plan = runSession(sender, userPrompt, proactive, true);
+            String plan = runSession(sender, userPrompt, proactive, mode);
             
-            if (plan != null && autonomous && !plan.isBlank())
+            if (plan != null && autonomous && !plan.isBlank() && mode == TaskMode.PLANNING)
             {
                 String execPrompt = "Execute the following proposed plan:\n" + plan;
-                runSession(sender, execPrompt, proactive, false);
+                runSession(sender, execPrompt, proactive, TaskMode.EXECUTION);
             }
         }
         catch (Exception e)
@@ -244,20 +253,25 @@ class AdminAiService implements Listener
         }
     }
 
-    private String runSession(CommandSender sender, String userPrompt, boolean proactive, boolean isPlanning) throws Exception
+    private String runSession(CommandSender sender, String userPrompt, boolean proactive, TaskMode mode) throws Exception
     {
         wasCompacted = false;
         List<AiMessage> messages = new ArrayList<>();
-        messages.add(new AiMessage("system", systemPrompt(isPlanning)));
+        messages.add(new AiMessage("system", systemPrompt(mode)));
         messages.add(new AiMessage("user", buildInitialPrompt(userPrompt)));
 
-        if (isPlanning)
-            bootstrapWithInitialLogRead(messages);
+        if (mode == TaskMode.DIAGNOSTIC)
+            messages.add(new AiMessage("user", startDiagnosticFile(userPrompt)));
+        else
+            currentDiagnosticFile.set(null);
 
-        return runAgentWithMessages(sender, messages, proactive, isPlanning);
+        if (mode == TaskMode.PLANNING || mode == TaskMode.DIAGNOSTIC)
+            bootstrapWithInitialLogRead(messages, mode);
+
+        return runAgentWithMessages(sender, messages, proactive, mode);
     }
 
-    private String runAgentWithMessages(CommandSender sender, List<AiMessage> messages, boolean proactive, boolean isPlanning) throws Exception
+    private String runAgentWithMessages(CommandSender sender, List<AiMessage> messages, boolean proactive, TaskMode mode) throws Exception
     {
         try
         {
@@ -299,7 +313,7 @@ class AdminAiService implements Listener
                 String result;
                 try
                 {
-                    result = executeAction(action, messages, proactive, isPlanning);
+                    result = executeAction(action, messages, proactive, mode);
                 }
                 catch (Throwable e)
                 {
@@ -313,8 +327,14 @@ class AdminAiService implements Listener
                 {
                     String finishMessage = finishMessage(action);
                     String plan = finishPlan(action);
-                    if (isPlanning) logAiNotes(finishMessage, plan);
-                    send(sender, ChatColor.GREEN + "Admin AI done: " + finishMessage);
+                    if (mode == TaskMode.PLANNING) logAiNotes(finishMessage, plan);
+                    
+                    String finalMessage = ChatColor.GREEN + "Admin AI done: " + finishMessage;
+                    Path diagFile = currentDiagnosticFile.get();
+                    if (mode == TaskMode.DIAGNOSTIC && diagFile != null)
+                        finalMessage += "\n" + ChatColor.YELLOW + "Diagnostic report created: " + diagFile.getFileName();
+                        
+                    send(sender, finalMessage);
                     return plan;
                 }
             }
@@ -336,7 +356,7 @@ class AdminAiService implements Listener
                 send(sender, ChatColor.YELLOW + "Context limit reached, attempting to compact history...");
                 if (compactMessages(messages))
                 {
-                    return runAgentWithMessages(sender, messages, proactive, isPlanning);
+                    return runAgentWithMessages(sender, messages, proactive, mode);
                 }
             }
             send(sender, ChatColor.RED + "Admin AI failed: " + errorMsg);
@@ -430,7 +450,7 @@ class AdminAiService implements Listener
         return false;
     }
 
-    private void bootstrapWithInitialLogRead(List<AiMessage> messages) throws IOException, InterruptedException
+    private void bootstrapWithInitialLogRead(List<AiMessage> messages, TaskMode mode) throws IOException, InterruptedException
     {
         List<String> logFiles = config.getStringList("admin-ai.actions.log-files");
         if (logFiles.isEmpty())
@@ -443,7 +463,7 @@ class AdminAiService implements Listener
         messages.add(new AiMessage("assistant", gson.toJson(initialAction)));
         try
         {
-            messages.add(new AiMessage("user", executeAction(initialAction, messages, true, true)));
+            messages.add(new AiMessage("user", executeAction(initialAction, messages, true, mode)));
         }
         catch (Throwable e)
         {
@@ -495,14 +515,14 @@ class AdminAiService implements Listener
         throw last == null ? new IOException("No enabled providers.") : last;
     }
 
-    private String executeAction(AiAction action, List<AiMessage> messages, boolean proactive, boolean isPlanning) throws IOException, InterruptedException
+    private String executeAction(AiAction action, List<AiMessage> messages, boolean proactive, TaskMode mode) throws IOException, InterruptedException
     {
         ensureStillEnabled();
         String actionName = action.action == null ? "" : action.action.toLowerCase(Locale.ROOT);
 
-        if (isPlanning && ("write_file".equals(actionName) || "append_file".equals(actionName) || "replace_in_file".equals(actionName) || "run_command".equals(actionName)))
+        if ((mode == TaskMode.PLANNING || mode == TaskMode.DIAGNOSTIC) && ("write_file".equals(actionName) || "append_file".equals(actionName) || "replace_in_file".equals(actionName) || "run_command".equals(actionName)))
         {
-            return "RESULT error\nYou are in PLANNING MODE. Gather info and use `finish` to propose a plan.";
+            return "RESULT error\nYou are in " + mode + " MODE. Gather info and use `finish` to propose a plan.";
         }
 
         if (isDestructive(actionName))
@@ -527,7 +547,7 @@ class AdminAiService implements Listener
 
             if ("ai".equals(approvalMode))
             {
-                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, isPlanning);
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, mode);
                 broadcastApprovalResult(actionName, action, proactive, result);
                 if (!result.approved())
                     return "RESULT error\nAction denied by approval AI: " + result.reason();
@@ -535,7 +555,7 @@ class AdminAiService implements Listener
             }
             else if ("ai-fallback-human".equals(approvalMode))
             {
-                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, isPlanning);
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, mode);
                 if (result.reason().startsWith("All approval AI providers unavailable"))
                 {
                     if (autonomous)
@@ -556,7 +576,7 @@ class AdminAiService implements Listener
             else if (autonomous)
             {
                 // Human approval mode but autonomous: use AI approval as safety net
-                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, isPlanning);
+                ApprovalAiClient.ApprovalResult result = approvalClient.evaluate(action, messages, proactive, mode);
                 broadcastApprovalResult(actionName, action, proactive, result);
                 if (!result.approved())
                     return "RESULT error\nAction denied by approval AI (autonomous safety): " + result.reason();
@@ -585,10 +605,102 @@ class AdminAiService implements Listener
             case "delete_file" -> "RESULT delete_file\n" + deleteAllowedFile(action.path);
             case "bash" -> "RESULT bash\n" + runBashCommand(action.command);
             case "run_command" -> "RESULT run_command\n" + runMinecraftCommand(action.command);
+            case "add_to_diagnostic" -> "RESULT add_to_diagnostic\n" + recordDiagnostic(action, null);
+            case "add_file_to_diagnostic" -> "RESULT add_file_to_diagnostic\n" + recordDiagnostic(action, false);
+            case "add_log_to_diagnostic" -> "RESULT add_log_to_diagnostic\n" + recordDiagnostic(action, true);
+            case "grep_to_diagnostic" -> "RESULT grep_to_diagnostic\n" + grepToDiagnostic(action);
             case "finish" -> "RESULT finish accepted";
             case "invalid_json" -> "RESULT error\n" + action.message;
-            default -> "RESULT error\nUnknown action. Use read_log, read_file, list_dir, grep, find, write_file, append_file, replace_in_file, delete_file, bash, run_command, finish.";
+            default -> "RESULT error\nUnknown action. Use read_log, read_file, list_dir, grep, find, write_file, append_file, replace_in_file, delete_file, bash, run_command, add_to_diagnostic, add_file_to_diagnostic, add_log_to_diagnostic, grep_to_diagnostic, finish.";
         };
+    }
+
+    private String grepToDiagnostic(AiAction action) throws IOException
+    {
+        if (action.path == null || action.issue == null || action.issue.isBlank() || action.content == null || action.content.isBlank())
+            return "Error: path, issue description, and content (pattern) are required.";
+
+        String grepResult = grep(action.path, action.content);
+        if (grepResult.startsWith("Path does not exist") || grepResult.startsWith("Error"))
+             return "Error: " + grepResult;
+
+        Path file = currentDiagnosticFile.get();
+        if (file == null)
+            file = createDiagnosticFile("Grep diagnostic entry");
+
+        String issue = action.issue.trim();
+        StringBuilder sb = new StringBuilder();
+        sb.append("### Grep: `").append(action.content).append("` in ").append(action.path);
+        sb.append("\n```\n").append(grepResult.replace("```", "'' '")).append("\n```\n");
+
+        currentDiagnosticSections.computeIfAbsent(issue, ignored -> new ArrayList<>()).add(sb.toString());
+        writeDiagnosticFile(file);
+        return "Added grep results for issue '" + action.issue + "' to " + file;
+    }
+
+    private String recordDiagnostic(AiAction action, Boolean logOnlyHint) throws IOException
+    {
+        if (action.path == null || action.issue == null || action.issue.isBlank())
+            return "Error: path and issue description are required.";
+        
+        boolean isLog = logOnlyHint != null ? logOnlyHint : action.path.toLowerCase(Locale.ROOT).endsWith(".log");
+        Path resolved = resolveAllowedPath(action.path, isLog);
+        String content = readAllowedFile(action.path, isLog, action.startLine, action.endLine);
+        if (content.startsWith("File does not exist") || content.startsWith("Path blocked") || content.startsWith("File is a directory"))
+            return "Error recording diagnostic: " + content;
+
+        Path file = currentDiagnosticFile.get();
+        if (file == null)
+            file = createDiagnosticFile("Manual diagnostic entry");
+
+        String issue = action.issue.trim();
+        StringBuilder sb = new StringBuilder();
+        sb.append("### File: ").append(resolved);
+        if (action.startLine != null || action.endLine != null)
+            sb.append(" (lines ").append(action.startLine == null ? 1 : action.startLine)
+              .append("-").append(action.endLine == null ? "?" : action.endLine).append(")");
+        
+        // Protect against nested markdown code blocks breaking formatting
+        String safeContent = content.trim().replace("```", "'' '");
+        sb.append("\n```\n").append(safeContent).append("\n```\n");
+
+        currentDiagnosticSections.computeIfAbsent(issue, ignored -> new ArrayList<>()).add(sb.toString());
+        writeDiagnosticFile(file);
+        return "Added diagnostic info for issue '" + action.issue + "' from " + resolved + " to " + file;
+    }
+
+    private String startDiagnosticFile(String userPrompt) throws IOException
+    {
+        Path file = createDiagnosticFile(userPrompt);
+        return "DIAGNOSTIC OUTPUT FILE\n" + file + "\nUse add_log_to_diagnostic or add_file_to_diagnostic for every issue/file snippet that should be copy-pasted into an external AI prompt.";
+    }
+
+    private Path createDiagnosticFile(String userPrompt) throws IOException
+    {
+        plugin.getDataFolder().mkdirs();
+        String timestamp = Instant.now().toString().replace(":", "-");
+        Path file = plugin.getDataFolder().toPath().resolve("ai-diagnostics-" + timestamp + ".md");
+        currentDiagnosticHeader = "# Admin AI Diagnostics\n\n"
+                + "- Created: " + Instant.now() + " UTC\n"
+                + "- Task: " + nullToEmpty(userPrompt).trim().replace("\n", " ") + "\n\n"
+                + "Each issue section is intended to be copy-pasted into an external AI prompt.\n";
+        currentDiagnosticSections.clear();
+        Files.writeString(file, currentDiagnosticHeader, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
+        currentDiagnosticFile.set(file);
+        return file;
+    }
+
+    private void writeDiagnosticFile(Path file) throws IOException
+    {
+        StringBuilder document = new StringBuilder(currentDiagnosticHeader);
+        for (java.util.Map.Entry<String, List<String>> entry : currentDiagnosticSections.entrySet())
+        {
+            document.append("\n## Issue: ").append(entry.getKey()).append("\n\n");
+            for (String section : entry.getValue())
+                document.append(section).append("\n");
+        }
+        Files.writeString(file, document.toString(), StandardCharsets.UTF_8,
+                StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
     private String reformatJson(String badJson)
@@ -1125,19 +1237,32 @@ class AdminAiService implements Listener
                 + String.join("\n", config.getStringList("admin-ai.actions.log-files"));
     }
 
-    private String systemPrompt(boolean isPlanning)
+    private String systemPrompt(TaskMode mode)
     {
         boolean autonomous = !config.isInteractive();
-        String modeText = isPlanning ? """
+        String modeText = switch (mode) {
+            case PLANNING -> """
                 You are in PLANNING MODE. Investigate issues and propose a plan.
                 When you understand the issues, use `finish` with your notes in `message` and action items in `proposedPlan`.
-                """ : (autonomous ? """
+                """;
+            case EXECUTION -> autonomous ? """
                 You are in EXECUTION MODE (Autonomous). You must execute the provided plan to fix issues.
                 - Apply fixes directly using write_file or run_command.
                 - After executing the plan, use `finish`.
                 """ : """
                 If a task is too big and there are no suitable forks, propose action items in your `finish` action's `proposedPlan` field.
-                """);
+                """;
+            case DIAGNOSTIC -> """
+                You are in DIAGNOSTIC MODE. Your goal is to gather relevant log snippets and configuration files for issues.
+                - Use `add_log_to_diagnostic` to record relevant logs. It automatically tails the log if startLine/endLine are omitted.
+                - Use `add_file_to_diagnostic` to record relevant config file sections or full files.
+                - Use `grep_to_diagnostic` to search across logs or configurations and record the matching lines directly to the diagnostic report.
+                - Use the same `issue` value for all snippets that belong to the same problem; the plugin groups them under one issue entry.
+                - Prefer exact line ranges for logs and focused config sections, but include entire config files when the whole file is relevant.
+                - The diagnostic file you build is intended to be shared with an external AI for troubleshooting.
+                - When you have gathered all relevant info for the requested task, use `finish`.
+                """;
+        };
 
         return """
                 You are an autonomous Minecraft server admin maintenance agent running inside a Bukkit plugin.
@@ -1160,13 +1285,17 @@ class AdminAiService implements Listener
                 {"action":"list_dir","path":"path/to/directory"}
                 {"action":"grep","path":"path/to/directory_or_file","content":"search string or regex"}
                 {"action":"find","path":"path/to/directory","content":"glob pattern"}
-                """ + (isPlanning ? "" : """
+                """ + (mode == TaskMode.PLANNING || mode == TaskMode.DIAGNOSTIC ? "" : """
                 {"action":"write_file","path":"path/to/file","content":"full new file content"}
                 {"action":"append_file","path":"path/to/file","content":"content to append"}
                 {"action":"replace_in_file","path":"path/to/file","content":"exact target content to replace","message":"replacement content"}
                 {"action":"delete_file","path":"path/to/file"}
                 {"action":"run_command","command":"minecraft server command"}
-                """) + """
+                """) + (mode == TaskMode.DIAGNOSTIC ? """
+                {"action":"add_log_to_diagnostic","path":"path/to/file","issue":"Brief Issue Name","startLine":1,"endLine":100}
+                {"action":"add_file_to_diagnostic","path":"path/to/file","issue":"Brief Issue Name","startLine":1,"endLine":100}
+                {"action":"grep_to_diagnostic","path":"path/to/file_or_dir","issue":"Brief Issue Name","content":"search string or regex"}
+                """ : "") + """
                 {"action":"bash","command":"allowed shell command"}
                 {"action":"finish","message":"summary of work done, followed by notes.", "proposedPlan": "optional: plan items if needed (string or array of strings)"}
 
@@ -1185,7 +1314,7 @@ class AdminAiService implements Listener
                 Safety & Tools:
                 - Use `/update` to pull and build updates for all plugins at once instead of manual git/maven commands.
                 - Never request destructive commands.
-                """ + (isPlanning ? "" : """
+                """ + (mode == TaskMode.PLANNING || mode == TaskMode.DIAGNOSTIC ? "" : """
                 - Use read_file before write_file for configuration files.
                 """) + """
                 - Use `read_log` without startLine/endLine to tail the latest logs.

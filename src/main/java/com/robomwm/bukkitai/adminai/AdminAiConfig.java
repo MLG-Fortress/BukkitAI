@@ -82,6 +82,7 @@ class AdminAiConfig
         config.set("admin-ai.autonomous-max-iterations", old.getInt("admin-ai.autonomous-max-iterations", 1000));
         config.set("admin-ai.compact-threshold-messages", old.getInt("admin-ai.compact-threshold-messages", 15));
         config.set("admin-ai.proactive-interval-minutes", old.getInt("admin-ai.proactive-interval-minutes", 10));
+        config.set("admin-ai.proactive-mode", old.getString("admin-ai.proactive-mode", "PLANNING"));
         config.set("admin-ai.max-command-seconds", old.getInt("admin-ai.max-command-seconds", 300));
         config.set("admin-ai.max-file-bytes", old.getInt("admin-ai.max-file-bytes", 131072));
         config.set("admin-ai.max-context-tokens", old.getInt("admin-ai.max-context-tokens", 32000));
@@ -126,7 +127,7 @@ class AdminAiConfig
                 "mvn -B --no-transfer-progress clean package",
                 "mvn -B --no-transfer-progress clean install"
         )));
-        config.set("admin-ai.actions.allowed-file-paths", old.getList("admin-ai.actions.allowed-file-paths", List.of("ai-notes.md")));
+        config.set("admin-ai.actions.allowed-file-paths", old.getList("admin-ai.actions.allowed-file-paths", List.of("ai-notes.md", "ai-diagnostics.md")));
         config.set("admin-ai.actions.denied-command-contains", old.getList("admin-ai.actions.denied-command-contains", List.of(
                 " rm ", " rm -", " reset --hard", " checkout --", " clean -fd", " clean -fx", " rebase ", " push --force",
                 " --force", " --amend", " chmod ", " chown "
@@ -196,6 +197,18 @@ class AdminAiConfig
     {
         plugin.getConfig().set("admin-ai.interactive", interactive);
         plugin.saveConfig();
+    }
+
+    AdminAiService.TaskMode getProactiveMode()
+    {
+        try
+        {
+            return AdminAiService.TaskMode.valueOf(getString("admin-ai.proactive-mode").toUpperCase(java.util.Locale.ROOT));
+        }
+        catch (Exception e)
+        {
+            return AdminAiService.TaskMode.PLANNING;
+        }
     }
 
     int getInt(String path)
