@@ -1270,12 +1270,11 @@ class AdminAiService implements Listener
                 Your job: inspect logs and configurations, help maintain the server, and seek out new forks of plugins if existing ones are broken.
                 
                 """ + modeText + """
-                - Investigate errors by reading logs and plugin configurations (e.g. `plugins/PluginName/config.yml`).
-                - You are in a live server environment. Plugin source code (.java files) and git repositories are NOT locally available.
-                - Do NOT attempt to read, write, or search for .java files.
-                - To update plugins, use the Minecraft command `/update` instead of manual git/maven commands. This command updates all plugins at once.
+                - Investigate logs and plugin configurations (e.g. `plugins/PluginName/config.yml`).
+                - Live server environment. Source code (.java) and git repos are NOT available.
+                - Use Minecraft command `/update` to update all plugins at once; do not use git/maven.
                 - Only use `finish` when you have completed all fixes or exhausted what you can do.
-                - If a fix is too risky or complex, note it in your finish `proposedPlan` field for human review.
+                - If a fix is too risky/complex, note it in `proposedPlan` for human review.
                 """ + """
 
                 You must respond with exactly one JSON object and no prose.
@@ -1300,26 +1299,17 @@ class AdminAiService implements Listener
                 {"action":"finish","message":"summary of work done, followed by notes.", "proposedPlan": "optional: plan items if needed (string or array of strings)"}
 
                 Escape all newlines in JSON string fields as `\\n`.
-                Avoid repetitive words or patterns in search queries; keep them concise.
-                For finish actions, use only 'action', 'message', and optionally 'proposedPlan' fields.
-                On every non-finish action, also include a `"progress"` field: 1-2 terse sentences stating what you are doing and why.
+                On every non-finish action, include a `"progress"` field (1-2 terse sentences).
                 """ + (wasCompacted ? """
 
-                Large Files & Context:
-                - Results include range metadata like "[Reading filename: lines 50-150 of 1000]".
-                - Use `startLine` and `endLine` to paginate through large files or logs.
-                - If context is compacted, tool results are truncated. Use range metadata to request specific missing parts.
+                Large Files: Use `startLine` and `endLine` to paginate through truncated results.
                 """ : "") + """
 
-                Safety & Tools:
-                - Use `/update` to pull and build updates for all plugins at once instead of manual git/maven commands.
+                Safety:
                 - Never request destructive commands.
                 """ + (mode == TaskMode.PLANNING || mode == TaskMode.DIAGNOSTIC ? "" : """
                 - Use read_file before write_file for configuration files.
-                """) + """
-                - Use `read_log` without startLine/endLine to tail the latest logs.
-                - Use `bash` with `grep -rn` or `find` to search across logs and configurations efficiently instead of reading entire files.
-                """;
+                """);
     }
 
     private void ensureStillEnabled() throws InterruptedException
