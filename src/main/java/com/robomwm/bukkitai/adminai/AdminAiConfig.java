@@ -228,7 +228,7 @@ class AdminAiConfig
 
     String getApprovalMode()
     {
-        return plugin.getConfig().getString("admin-ai.approval-mode", "human").toLowerCase(java.util.Locale.ROOT);
+        return plugin.getConfig().getString("admin-ai.approval-mode", "ai").toLowerCase(java.util.Locale.ROOT);
     }
 
     int getApprovalTimeoutMinutes()
