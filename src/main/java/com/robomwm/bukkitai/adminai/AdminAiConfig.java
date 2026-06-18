@@ -141,7 +141,7 @@ class AdminAiConfig
         config.set(path + ".enabled", true);
         config.set(path + ".protocol", "ollama-native");
         config.set(path + ".endpoint", "http://localhost:11434/api/chat");
-        config.set(path + ".model", "llama3.2:3b");
+        config.set(path + ".model", "qwen3.5:2b");
         config.set(path + ".api-key", "ollama");
         config.set(path + ".timeout-seconds", 600);
     }
@@ -300,4 +300,6 @@ class AdminAiConfig
         }
         return providers;
     }
+}
+
 }
